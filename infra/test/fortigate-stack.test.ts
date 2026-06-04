@@ -83,6 +83,13 @@ describe('FortiGateStack', () => {
     template.resourceCountIs('AWS::EC2::Instance', 2);
   });
 
+  test('instances have EBS optimization and detailed monitoring enabled', () => {
+    template.allResourcesProperties('AWS::EC2::Instance', {
+      EbsOptimized: true,
+      Monitoring: true,
+    });
+  });
+
   test('instances use GP3 EBS volume of correct size', () => {
     template.hasResourceProperties('AWS::EC2::Instance', {
       BlockDeviceMappings: Match.arrayWith([

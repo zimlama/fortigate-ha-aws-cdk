@@ -162,6 +162,8 @@ end
       securityGroup: sgWan,
       role,
       userData: userDataActive,
+      ebsOptimized: true,
+      detailedMonitoring: true,
       blockDevices: [{
         deviceName: '/dev/sda1',
         volume: ec2.BlockDeviceVolume.ebs(defaults.ebsGb, {
@@ -201,6 +203,8 @@ end
       securityGroup: sgWan,
       role,
       userData: userDataPassive,
+      ebsOptimized: true,
+      detailedMonitoring: true,
       blockDevices: [{
         deviceName: '/dev/sda1',
         volume: ec2.BlockDeviceVolume.ebs(defaults.ebsGb, {
