@@ -22,7 +22,7 @@ requirement, not an optional optimisation.
 
 ## Topology overview
 
-![FortiGate HA Topology — AWS Multi-AZ Active/Passive FGCP](../diagrams/02-HLD-fortigate-ha-2.png)
+![FortiGate HA Topology — AWS Multi-AZ Active/Passive FGCP](diagrams/02-HLD-fortigate-ha-2.png)
 
 **Key design points:**
 
