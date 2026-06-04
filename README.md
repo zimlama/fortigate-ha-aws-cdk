@@ -36,37 +36,11 @@ This repo deploys the full architecture, triggers a real failover, and automatic
 
 ## Architecture
 
-```
-                         Internet
-                            │
-                     Internet Gateway
-                            │
-         ┌──────────────────┴──────────────────┐
-         │              VPC  10.0.0.0/16         │
-         │                                        │
-         │   us-east-1a           us-east-1b      │
-         │  ┌─────────────┐   ┌─────────────┐    │
-         │  │ public-1a   │   │ public-1b   │    │
-         │  │ 10.0.1.0/24 │   │10.0.11.0/24 │    │
-         │  │  Port1  EIP─┼───►EIP migrates │    │
-         │  ├─────────────┤   ├─────────────┤    │
-         │  │ private-1a  │   │ private-1b  │    │
-         │  │ 10.0.2.0/24 │   │10.0.12.0/24 │    │
-         │  │  Port2 MGMT ◄───── RT updated │    │
-         │  ├─────────────┤   ├─────────────┤    │
-         │  │   ha-1a     │   │   ha-1b     │    │
-         │  │ 10.0.3.0/24 │   │10.0.13.0/24 │    │
-         │  │  Port3 ◄────┼703┼─► Port3     │    │
-         │  └──────┬──────┘   └──────┬──────┘    │
-         │         │                  │            │
-         │   FortiGate          FortiGate          │
-         │    ACTIVE             PASSIVE            │
-         │  c6in.xlarge        c6in.xlarge          │
-         │  priority 200       priority 100         │
-         └────────────────────────────────────────┘
-```
+![FortiGate HA 2-AZ Architecture](docs/diagrams/02-HLD-fortigate-ha.png)
 
 Failover is 100% API-driven — across AZs there is no L2, so the FGCP callback must call `ec2:AssociateAddress` (EIP) and `ec2:ReplaceRoute` (route tables). The hexagonal validator confirms both happened and that Port2 management is reachable on the new Active.
+
+> Source: [`docs/diagrams/02-HLD-fortigate-ha.drawio`](docs/diagrams/02-HLD-fortigate-ha.drawio) — open in [diagrams.net](https://app.diagrams.net) to edit.
 
 ---
 
