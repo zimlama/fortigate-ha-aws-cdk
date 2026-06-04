@@ -16,8 +16,8 @@ export class NetworkStack extends cdk.Stack {
   public readonly sgWan: ec2.SecurityGroup;
   public readonly sgMgmt: ec2.SecurityGroup;
   public readonly sgHa: ec2.SecurityGroup;
-  public readonly rtPrivate1a: ec2.CfnRouteTable;
-  public readonly rtPrivate1b: ec2.CfnRouteTable;
+  public readonly rtPrivate1a: ec2.IRouteTable;
+  public readonly rtPrivate1b: ec2.IRouteTable;
 
   constructor(scope: Construct, id: string, props?: NetworkStackProps) {
     super(scope, id, props);
@@ -80,40 +80,28 @@ export class NetworkStack extends cdk.Stack {
     });
 
     // ─── Route Tables ────────────────────────────────────────────────────────
-    // Public: IGW route, associated to both public subnets
-    const rtPublic = new ec2.CfnRouteTable(this, 'RtPublic', { vpcId: this.vpc.vpcId });
+    // ec2.Subnet auto-creates a route table + association per subnet.
+    // We reuse those — adding routes directly avoids duplicate associations
+    // (two associations on the same subnet cause CloudFormation NotStabilized).
 
-    new ec2.CfnRoute(this, 'RtPublicDefault', {
-      routeTableId: rtPublic.ref,
+    // Public subnets: add IGW default route to the auto-created route tables
+    this.publicSubnet1a.addRoute('IgwRoute1a', {
+      routerId: igw.ref,
+      routerType: ec2.RouterType.GATEWAY,
       destinationCidrBlock: '0.0.0.0/0',
-      gatewayId: igw.ref,
+      enablesInternetConnectivity: true,
+    });
+    this.publicSubnet1b.addRoute('IgwRoute1b', {
+      routerId: igw.ref,
+      routerType: ec2.RouterType.GATEWAY,
+      destinationCidrBlock: '0.0.0.0/0',
+      enablesInternetConnectivity: true,
     });
 
-    new ec2.CfnSubnetRouteTableAssociation(this, 'RtPublicAssoc1a', {
-      routeTableId: rtPublic.ref,
-      subnetId: this.publicSubnet1a.subnetId,
-    });
-
-    new ec2.CfnSubnetRouteTableAssociation(this, 'RtPublicAssoc1b', {
-      routeTableId: rtPublic.ref,
-      subnetId: this.publicSubnet1b.subnetId,
-    });
-
-    // Private-1a: 0.0.0.0/0 → Port2-A ENI (updated on failover)
-    this.rtPrivate1a = new ec2.CfnRouteTable(this, 'RtPrivate1a', { vpcId: this.vpc.vpcId });
-
-    new ec2.CfnSubnetRouteTableAssociation(this, 'RtPrivate1aAssoc', {
-      routeTableId: this.rtPrivate1a.ref,
-      subnetId: this.privateSubnet1a.subnetId,
-    });
-
-    // Private-1b: 0.0.0.0/0 → Port2-A ENI initially (updated on failover)
-    this.rtPrivate1b = new ec2.CfnRouteTable(this, 'RtPrivate1b', { vpcId: this.vpc.vpcId });
-
-    new ec2.CfnSubnetRouteTableAssociation(this, 'RtPrivate1bAssoc', {
-      routeTableId: this.rtPrivate1b.ref,
-      subnetId: this.privateSubnet1b.subnetId,
-    });
+    // Private subnets: reuse auto-created route tables (FortiGate SDN connector
+    // calls ec2:ReplaceRoute on these tables during failover)
+    this.rtPrivate1a = this.privateSubnet1a.routeTable;
+    this.rtPrivate1b = this.privateSubnet1b.routeTable;
 
     // ─── Security Groups ─────────────────────────────────────────────────────
 
@@ -158,7 +146,7 @@ export class NetworkStack extends cdk.Stack {
 
     // ─── Outputs ─────────────────────────────────────────────────────────────
     new cdk.CfnOutput(this, 'VpcId', { value: this.vpc.vpcId });
-    new cdk.CfnOutput(this, 'PrivateRouteTable1aId', { value: this.rtPrivate1a.ref });
-    new cdk.CfnOutput(this, 'PrivateRouteTable1bId', { value: this.rtPrivate1b.ref });
+    new cdk.CfnOutput(this, 'PrivateRouteTable1aId', { value: this.rtPrivate1a.routeTableId });
+    new cdk.CfnOutput(this, 'PrivateRouteTable1bId', { value: this.rtPrivate1b.routeTableId });
   }
 }

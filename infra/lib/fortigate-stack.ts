@@ -98,8 +98,8 @@ export class FortiGateStack extends cdk.Stack {
     });
 
     // ─── UserData — FGT-Active ────────────────────────────────────────────────
-    const rtPrivate1aId = rtPrivate1a.ref;
-    const rtPrivate1bId = rtPrivate1b.ref;
+    const rtPrivate1aId = rtPrivate1a.routeTableId;
+    const rtPrivate1bId = rtPrivate1b.routeTableId;
 
     const userDataActive = ec2.UserData.custom(`
 config system interface
