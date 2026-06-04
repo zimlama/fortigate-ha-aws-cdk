@@ -10,6 +10,7 @@ coverage/
 
 # CDK
 cdk.out/
+cdk.context.json
 *.js.map
 
 # Logs
