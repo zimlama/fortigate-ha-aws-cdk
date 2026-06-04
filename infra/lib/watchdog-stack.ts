@@ -64,7 +64,7 @@ export class WatchdogStack extends cdk.Stack {
       environment: {
         CODEBUILD_PROJECT: destroyProject.projectName,
       },
-      timeout: cdk.Duration.seconds(defaults.labTimeout),
+      timeout: cdk.Duration.seconds(defaults.lambdaTimeoutSeconds),
     });
 
     // Grant Lambda permission to start the CodeBuild build
@@ -76,7 +76,7 @@ export class WatchdogStack extends cdk.Stack {
 
     // ─── EventBridge rule ─────────────────────────────────────────────────────
     const rule = new events.Rule(this, 'AutoDestroyRule', {
-      schedule: events.Schedule.rate(cdk.Duration.minutes(defaults.labTimeout)),
+      schedule: events.Schedule.rate(cdk.Duration.minutes(defaults.labTimeoutMinutes)),
     });
 
     rule.addTarget(new targets.LambdaFunction(fn));

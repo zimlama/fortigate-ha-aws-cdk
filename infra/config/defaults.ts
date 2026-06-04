@@ -12,6 +12,7 @@ export const defaults = {
   ebsGb:         30,
   haPriorities:  { active: 200, passive: 100 },
   haPort:        703,
-  failoverTimeout: 120,   // seconds (NFR)
-  labTimeout:    30,      // minutes (watchdog)
+  failoverTimeout:      120,  // seconds — failover detection NFR
+  labTimeoutMinutes:     30,  // minutes — EventBridge schedule (watchdog)
+  lambdaTimeoutSeconds:  30,  // seconds — Lambda execution timeout (start CodeBuild build)
 } as const;
