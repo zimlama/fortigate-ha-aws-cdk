@@ -4,7 +4,8 @@
 When the Passive node takes over, you lose management access — silently.
 This repo proves it, fixes it, and validates the fix automatically.
 
-![Tests](https://img.shields.io/badge/tests-24%20passing-brightgreen)
+[![Validator](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml/badge.svg?job=validator)](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml)
+[![Infra](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml/badge.svg?job=infra)](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml)
 ![Coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)
 ![CDK](https://img.shields.io/badge/CDK-v2%20TypeScript-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
