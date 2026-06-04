@@ -119,43 +119,70 @@ Expected: Returns ImageId + Image name.
 
 ---
 
-## STEP 3: Configure CDK Context
+## STEP 3: Bootstrap CDK environment (one-time per account/region)
 
-### 3.1 Navigate to infra directory
+> ⚠️ **This step is mandatory and commonly missed.** Even if the SSM parameter
+> `/cdk-bootstrap/hnb659fds/version` exists, the deploy will fail if the CDK S3 assets
+> bucket was deleted. Always verify before deploying.
 
-```bash
-cd /path/to/fortigate-ha-aws-cdk/repo/infra
-pwd
-```
-
-### 3.2 Update cdk.json with deployment parameters
-
-Edit `infra/cdk.json`:
-
-```json
-{
-  "app": "npx ts-node --prefer-ts-exts bin/app.ts",
-  "context": {
-    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
-    "@aws-cdk/core:checkSecretUsage": true,
-    "@aws-cdk/core:target-partitions": ["aws", "aws-cn"],
-    "adminCidr": "0.0.0.0/0",
-    "haPassword": "FortiGate123!"
-  }
-}
-```
-
-**Parameters:**
-- `adminCidr`: CIDR range for SSH/HTTPS access to Port2 (MGMT). Set to your IP for production; `0.0.0.0/0` for lab.
-- `haPassword`: HA heartbeat password (min 6 chars). Change for production.
-
-### 3.3 Verify configuration
+### 3.1 Verify bootstrap exists
 
 ```bash
-cat cdk.json
+aws s3 ls s3://cdk-hnb659fds-assets-$(aws sts get-caller-identity --query Account --output text)-us-east-1 2>&1
 ```
 
-Expected: Should display updated context with `adminCidr` and `haPassword`.
+- If bucket is listed → bootstrap is OK, skip to Step 4.
+- If `NoSuchBucket` → run bootstrap below.
+
+### 3.2 Run CDK bootstrap (if needed)
+
+```bash
+cd repo/infra
+npx cdk bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/us-east-1
+```
+
+Expected output: `✅ Environment aws://XXXXXXXXXXXX/us-east-1 bootstrapped.`
+Duration: ~2 minutes. Only required once per account/region.
+
+---
+
+## STEP 4: Install Dependencies
+
+### 4.1 Install npm packages
+
+```bash
+cd repo/infra && npm install
+```
+
+Expected: `added X packages, audited Y packages`.
+
+---
+
+## STEP 5: Synthesize CDK (Validate Configuration)
+
+### 5.1 Synthesize templates
+
+Pass context values via CLI — **do NOT hardcode `haPassword` in `cdk.json`** (this is a public repo):
+
+```bash
+npx cdk synth \
+  -c adminCidr=$(curl -s ifconfig.me)/32 \
+  -c haPassword=YourPasswordHere 2>&1 | tail -5
+```
+
+**What this does:**
+- Looks up FortiGate AMI in your account/region
+- Generates CloudFormation templates
+- Validates configuration syntax
+
+**Expected output:**
+```
+Searching for AMI in 064625181580:us-east-1
+Successfully synthesized to /path/to/cdk.out
+Supply a stack id (NetworkStack, FortiGateStack, WatchdogStack) to display its template.
+```
+
+**If error:** Check AWS CLI credentials, Marketplace AMI subscription, and CDK bootstrap.
 
 ---
 
@@ -209,18 +236,27 @@ Supply a stack id (NetworkStack, FortiGateStack, WatchdogStack) to display its t
 
 ## STEP 6: Deploy to AWS (CREATE INFRASTRUCTURE)
 
-### 6.1 Preview changes
+### 6.1 Use the pipeline script (recommended)
+
+The script handles build → deploy → failover test → auto-destroy in one command:
 
 ```bash
-npx cdk diff
+cd repo
+HA_PASSWORD=YourPasswordHere \
+  ADMIN_CIDR=$(curl -s ifconfig.me)/32 \
+  ./scripts/deploy-and-test.sh
 ```
 
-Shows what will be created (VPC, subnets, EC2 instances, EIP, etc.).
+No `AWS_PROFILE` needed if using the `default` profile.
 
-### 6.2 Deploy all stacks
+### 6.2 Or deploy manually (step by step)
 
 ```bash
-npx cdk deploy --all
+cd repo/infra
+npx cdk deploy --all \
+  --require-approval never \
+  -c adminCidr=$(curl -s ifconfig.me)/32 \
+  -c haPassword=YourPasswordHere
 ```
 
 **When prompted:** `Do you wish to continue?` → Type `y` and press Enter.
@@ -476,6 +512,26 @@ The Watchdog stack runs EventBridge → Lambda → CodeBuild to auto-destroy aft
 
 ## Troubleshooting
 
+### Problem: `No bucket named 'cdk-hnb659fds-assets-...'`
+
+**Cause:** CDK bootstrap S3 bucket doesn't exist. The SSM parameter may exist but the bucket
+was deleted. This is the most common first-deploy failure.
+
+**Fix:**
+```bash
+npx cdk bootstrap aws://$(aws sts get-caller-identity --query Account --output text)/us-east-1
+```
+
+---
+
+### Problem: `SSM parameter /cdk-bootstrap/hnb659fds/version not found`
+
+**Cause:** CDK environment was never bootstrapped in this account/region.
+
+**Fix:** Same as above — run `cdk bootstrap`.
+
+---
+
 ### Problem: `MachineImage not found`
 
 **Cause:** FortiGate AMI not subscribed in Marketplace.
@@ -544,11 +600,11 @@ aws cloudformation describe-stack-events \
 
 ## Success Criteria Checklist
 
-- [ ] AWS CLI configured and authenticated
-- [ ] FortiGate AMI accepted in Marketplace
-- [ ] `cdk.json` updated with adminCidr + haPassword
-- [ ] `npm install` completed successfully
-- [ ] `cdk synth` ran without errors
+- [ ] AWS CLI configured and authenticated (`aws sts get-caller-identity` works)
+- [ ] FortiGate PAYG subscripted in Marketplace ("Existing subscription detected")
+- [ ] CDK bootstrap S3 bucket exists (`cdk-hnb659fds-assets-<account>-us-east-1`)
+- [ ] `npm install` completed in `repo/infra/`
+- [ ] `cdk synth -c adminCidr=... -c haPassword=...` succeeds — context via CLI, NOT in cdk.json
 - [ ] `cdk deploy --all` completed (infrastructure created)
 - [ ] Both EC2 instances (Active/Passive) are **running**
 - [ ] EIP is **associated** with Active's Port1
