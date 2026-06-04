@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-PROFILE="${AWS_PROFILE:-test-admin}"
+PROFILE="${AWS_PROFILE:-default}"
 REGION="${AWS_REGION:-us-east-1}"
 CLUSTER_TAG="${CLUSTER_TAG:-fortigate-ha}"
 POLL_INTERVAL_MS="${POLL_INTERVAL_MS:-5000}"

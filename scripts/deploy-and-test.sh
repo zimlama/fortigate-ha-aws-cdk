@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-PROFILE="${AWS_PROFILE:-test-admin}"
+PROFILE="${AWS_PROFILE:-default}"
 REGION="${AWS_REGION:-us-east-1}"
 ADMIN_CIDR="${ADMIN_CIDR:-0.0.0.0/0}"
 SKIP_DESTROY="${SKIP_DESTROY:-}"
