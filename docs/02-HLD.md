@@ -22,33 +22,17 @@ requirement, not an optional optimisation.
 
 ## Topology overview
 
-```
-                        Internet
-                           │
-                    Internet Gateway
-                           │
-          ┌────────────────┴────────────────┐
-          │         VPC 10.0.0.0/16          │
-          │   us-east-1a        us-east-1b   │
-          │  ┌──────────┐    ┌──────────┐    │
-          │  │public-1a │    │public-1b │    │
-          │  │10.0.1/24 │    │10.0.11/24│    │
-          │  │ Port1-A  │    │ Port1-B  │    │
-          │  │  [EIP]◄──┼────┼──migrates│    │
-          │  ├──────────┤    ├──────────┤    │
-          │  │private-1a│    │private-1b│    │
-          │  │10.0.2/24 │    │10.0.12/24│    │
-          │  │ Port2-A  │    │ Port2-B  │    │
-          │  │  MGMT ◄──┼────┼─ RT ptr  │    │
-          │  ├──────────┤    ├──────────┤    │
-          │  │  ha-1a   │    │  ha-1b   │    │
-          │  │10.0.3/24 │    │10.0.13/24│    │
-          │  │ Port3-A ─┼────┼─ Port3-B │    │
-          │  │ heartbeat│703 │          │    │
-          │  └────┬─────┘    └─────┬────┘    │
-          │    FGT-Active       FGT-Passive   │
-          └─────────────────────────────────-┘
-```
+![FortiGate HA Topology — AWS Multi-AZ Active/Passive FGCP](../diagrams/02-HLD-fortigate-ha-2.png)
+
+**Key design points:**
+
+- **Internet → IGW → Port1 (WAN):** Public ingress. EIP attached to **FGT-Active's Port1-A**. On failover, EIP migrates to Port1-B via `ec2:AssociateAddress`.
+
+- **Port2 (INTERNAL/MGMT):** Management interface — RFC-001 requires it on Port2 (not MGMT), because MGMT has no failover coverage in AWS. Default route on private subnets (`private-1a`, `private-1b`) points to whichever node is **Active**. On failover, route-tables update via `ec2:ReplaceRoute`.
+
+- **Port3 (HA heartbeat):** FGCP unicast heartbeat (UDP 703, cross-AZ). Mandatory unicast — AWS has no L2/multicast between AZs. Detects failure in ~3 seconds.
+
+- **Two AZs (us-east-1a, us-east-1b):** FGT-Active (priority 200) in AZ-1a; FGT-Passive (priority 100) in AZ-1b. On Active failure → Passive becomes Active, all routes/EIP follow.
 
 ---
 
