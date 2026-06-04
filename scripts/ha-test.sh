@@ -24,7 +24,7 @@ ACTIVE_ID=$(
     --region "${REGION}" \
     --filters \
       "Name=tag:FortigateHACluster,Values=${CLUSTER_TAG}" \
-      "Name=tag:ha-role,Values=active" \
+      "Name=tag:FortigateHARole,Values=active" \
       "Name=instance-state-name,Values=running" \
     --query "Reservations[0].Instances[0].InstanceId" \
     --output text 2>/dev/null

@@ -9,6 +9,7 @@ export const defaults = {
     haB:         '10.0.13.0/24',
   },
   instanceType:  'c6in.xlarge',
+  clusterTag:    'fortigate-ha',
   ebsGb:         30,
   haPriorities:  { active: 200, passive: 100 },
   haPort:        703,

@@ -189,6 +189,9 @@ end
       deviceIndex: '2',
     });
 
+    cdk.Tags.of(fgtActive).add('FortigateHACluster', defaults.clusterTag);
+    cdk.Tags.of(fgtActive).add('FortigateHARole', 'active');
+
     // ─── FGT-Passive instance ─────────────────────────────────────────────────
     const fgtPassive = new ec2.Instance(this, 'FgtPassive', {
       instanceType: new ec2.InstanceType(defaults.instanceType),
@@ -224,8 +227,14 @@ end
       deviceIndex: '2',
     });
 
+    cdk.Tags.of(fgtPassive).add('FortigateHACluster', defaults.clusterTag);
+    cdk.Tags.of(fgtPassive).add('FortigateHARole', 'passive');
+
     // ─── EIP on Port1-A ───────────────────────────────────────────────────────
-    const eip = new ec2.CfnEIP(this, 'EipActive', { domain: 'vpc' });
+    const eip = new ec2.CfnEIP(this, 'EipActive', {
+      domain: 'vpc',
+      tags: [{ key: 'FortigateHACluster', value: defaults.clusterTag }],
+    });
 
     new ec2.CfnEIPAssociation(this, 'EipAssocActive', {
       allocationId: eip.attrAllocationId,

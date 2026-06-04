@@ -93,4 +93,30 @@ describe('FortiGateStack', () => {
       ]),
     });
   });
+
+  test('Active instance has cluster and role tags', () => {
+    template.hasResourceProperties('AWS::EC2::Instance', {
+      Tags: Match.arrayWith([
+        Match.objectLike({ Key: 'FortigateHACluster', Value: 'fortigate-ha' }),
+        Match.objectLike({ Key: 'FortigateHARole',    Value: 'active' }),
+      ]),
+    });
+  });
+
+  test('Passive instance has cluster and role tags', () => {
+    template.hasResourceProperties('AWS::EC2::Instance', {
+      Tags: Match.arrayWith([
+        Match.objectLike({ Key: 'FortigateHACluster', Value: 'fortigate-ha' }),
+        Match.objectLike({ Key: 'FortigateHARole',    Value: 'passive' }),
+      ]),
+    });
+  });
+
+  test('EIP has cluster tag so adapter can discover it', () => {
+    template.hasResourceProperties('AWS::EC2::EIP', {
+      Tags: Match.arrayWith([
+        Match.objectLike({ Key: 'FortigateHACluster', Value: 'fortigate-ha' }),
+      ]),
+    });
+  });
 });
