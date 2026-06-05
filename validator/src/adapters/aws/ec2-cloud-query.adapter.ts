@@ -39,10 +39,13 @@ export class Ec2CloudQuery implements CloudQueryPort {
 
     const nodes: HANode[] = instances.map((instance) => {
       const id = instance.InstanceId ?? "unknown";
-      const role = this.resolveRole(instance);
+      const hasWanEip = eipInstanceIds.has(id);
+      // Role is determined by EIP ownership, not by the static FortigateHARole tag.
+      // The tag is set at deploy time and never updated by FortiGate on failover.
+      // After failover the new Active holds the EIP — that is the ground truth.
+      const role = this.resolveRole(instance, hasWanEip);
       const priority = this.resolvePriority(instance);
       const port2PrivateIp = this.resolvePort2Ip(instance);
-      const hasWanEip = eipInstanceIds.has(id);
 
       return { id, role, priority, port2PrivateIp, hasWanEip };
     });
@@ -75,17 +78,12 @@ export class Ec2CloudQuery implements CloudQueryPort {
     return response.Addresses ?? [];
   }
 
-  private resolveRole(instance: Instance): NodeRole {
+  private resolveRole(instance: Instance, hasWanEip: boolean): NodeRole {
     const state = instance.State?.Name;
     if (state === "terminated" || state === "shutting-down") {
       return "TERMINATED";
     }
-
-    const haRoleTag = instance.Tags?.find(
-      (t) => t.Key === "FortigateHARole"
-    )?.Value;
-
-    if (haRoleTag === "active") return "ACTIVE";
+    if (hasWanEip) return "ACTIVE";
     return "PASSIVE";
   }
 

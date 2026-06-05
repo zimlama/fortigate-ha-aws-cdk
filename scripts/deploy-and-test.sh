@@ -60,6 +60,16 @@ echo "==> [T+0] Deploying stacks (NetworkStack → FortiGateStack → WatchdogSt
 )
 echo "    Deploy complete."
 
+# ─── Wait for FortiGate to boot and establish HA heartbeat ───────────────────
+# CDK deploy completes when EC2 state = "running", but FortiGate VM needs
+# ~5 min more to: boot FortiOS, apply UserData config, and establish the FGCP
+# unicast heartbeat with the peer. Testing before HA is up = no failover occurs.
+HA_BOOT_WAIT="${HA_BOOT_WAIT:-300}"
+echo ""
+echo "==> Waiting ${HA_BOOT_WAIT}s for FortiGate HA to boot and establish heartbeat..."
+sleep "${HA_BOOT_WAIT}"
+echo "    Wait complete."
+
 # ─── HA failover test ────────────────────────────────────────────────────────
 echo ""
 echo "==> [T+~10m] Running HA failover test..."
