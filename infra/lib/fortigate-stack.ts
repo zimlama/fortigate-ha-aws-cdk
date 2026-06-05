@@ -172,12 +172,16 @@ end
       }],
     });
 
-    // Override Port1 to use our pre-created ENI
+    // Override Port1 to use our pre-created ENI.
+    // Must delete SubnetId and SecurityGroupIds — AWS rejects requests that specify
+    // both NetworkInterfaces and instance-level subnet/SG (they are mutually exclusive).
     const cfnFgtActive = fgtActive.node.defaultChild as ec2.CfnInstance;
     cfnFgtActive.networkInterfaces = [{
       deviceIndex: '0',
       networkInterfaceId: eniP1a.ref,
     }];
+    cfnFgtActive.addPropertyDeletionOverride('SubnetId');
+    cfnFgtActive.addPropertyDeletionOverride('SecurityGroupIds');
 
     new ec2.CfnNetworkInterfaceAttachment(this, 'P2aAttach', {
       instanceId: fgtActive.instanceId,
@@ -218,6 +222,8 @@ end
       deviceIndex: '0',
       networkInterfaceId: eniP1b.ref,
     }];
+    cfnFgtPassive.addPropertyDeletionOverride('SubnetId');
+    cfnFgtPassive.addPropertyDeletionOverride('SecurityGroupIds');
 
     new ec2.CfnNetworkInterfaceAttachment(this, 'P2bAttach', {
       instanceId: fgtPassive.instanceId,
