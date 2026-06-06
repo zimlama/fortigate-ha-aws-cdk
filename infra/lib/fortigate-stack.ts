@@ -15,11 +15,15 @@ export class FortiGateStack extends cdk.Stack {
 
     const {
       vpc,
-      publicSubnet1a, privateSubnet1a, haSubnet1a,
-      publicSubnet1b, privateSubnet1b, haSubnet1b,
-      sgWan, sgMgmt, sgHa,
+      publicSubnet1a, privateSubnet1a, haSubnet1a, mgmtSubnet1a,
+      publicSubnet1b, privateSubnet1b, haSubnet1b, mgmtSubnet1b,
+      sgWan, sgMgmt, sgHa, sgHaMgmt,
       rtPrivate1a, rtPrivate1b,
     } = props.networkStack;
+
+    // port4 HA-management gateway = first usable address (.1) of each mgmt subnet
+    const mgmtGwA = defaults.subnets.mgmtA.replace(/\.0\/\d+$/, '.1');
+    const mgmtGwB = defaults.subnets.mgmtB.replace(/\.0\/\d+$/, '.1');
 
     const haPassword: string = this.node.tryGetContext('haPassword') ?? 'changeme123';
 
@@ -45,6 +49,8 @@ export class FortiGateStack extends cdk.Stack {
                 'ec2:DescribeInstanceStatus',
                 'ec2:DescribeNetworkInterfaces',
                 'ec2:ReplaceRoute',
+                'ec2:AssignPrivateIpAddresses',
+                'ec2:UnassignPrivateIpAddresses',
               ],
               resources: ['*'],
             }),
@@ -75,6 +81,13 @@ export class FortiGateStack extends cdk.Stack {
       description: 'FGT-Active Port3 HA',
     });
 
+    const eniP4a = new ec2.CfnNetworkInterface(this, 'EniP4a', {
+      subnetId: mgmtSubnet1a.subnetId,
+      groupSet: [sgHaMgmt.securityGroupId],
+      sourceDestCheck: false,
+      description: 'FGT-Active Port4 HA-MGMT',
+    });
+
     // ─── ENIs — FGT-Passive (us-east-1b) ─────────────────────────────────────
     const eniP1b = new ec2.CfnNetworkInterface(this, 'EniP1b', {
       subnetId: publicSubnet1b.subnetId,
@@ -97,6 +110,13 @@ export class FortiGateStack extends cdk.Stack {
       description: 'FGT-Passive Port3 HA',
     });
 
+    const eniP4b = new ec2.CfnNetworkInterface(this, 'EniP4b', {
+      subnetId: mgmtSubnet1b.subnetId,
+      groupSet: [sgHaMgmt.securityGroupId],
+      sourceDestCheck: false,
+      description: 'FGT-Passive Port4 HA-MGMT',
+    });
+
     // ─── UserData — FGT-Active ────────────────────────────────────────────────
     const rtPrivate1aId = rtPrivate1a.routeTableId;
     const rtPrivate1bId = rtPrivate1b.routeTableId;
@@ -107,6 +127,10 @@ config system interface
     set allowaccess https ssh
     set alias "MGMT-Port2"
   next
+  edit "port4"
+    set allowaccess https ssh ping
+    set alias "HA-MGMT"
+  next
 end
 config system ha
   set mode a-p
@@ -114,6 +138,13 @@ config system ha
   set password "${haPassword}"
   set hbdev "port3" 50
   set session-pickup enable
+  set ha-mgmt-status enable
+  config ha-mgmt-interfaces
+    edit 1
+      set interface "port4"
+      set gateway ${mgmtGwA}
+    next
+  end
   set override enable
   set priority ${defaults.haPriorities.active}
   set unicast-hb enable
@@ -122,6 +153,8 @@ end
 config system sdn-connector
   edit "aws"
     set type aws
+    set use-metadata-iam enable
+    set ha-status enable
     set route-table ${rtPrivate1aId},${rtPrivate1bId}
   next
 end
@@ -133,6 +166,10 @@ config system interface
     set allowaccess https ssh
     set alias "MGMT-Port2"
   next
+  edit "port4"
+    set allowaccess https ssh ping
+    set alias "HA-MGMT"
+  next
 end
 config system ha
   set mode a-p
@@ -140,6 +177,13 @@ config system ha
   set password "${haPassword}"
   set hbdev "port3" 50
   set session-pickup enable
+  set ha-mgmt-status enable
+  config ha-mgmt-interfaces
+    edit 1
+      set interface "port4"
+      set gateway ${mgmtGwB}
+    next
+  end
   set override enable
   set priority ${defaults.haPriorities.passive}
   set unicast-hb enable
@@ -148,6 +192,8 @@ end
 config system sdn-connector
   edit "aws"
     set type aws
+    set use-metadata-iam enable
+    set ha-status enable
     set route-table ${rtPrivate1aId},${rtPrivate1bId}
   next
 end
@@ -195,8 +241,15 @@ end
       deviceIndex: '2',
     });
 
+    new ec2.CfnNetworkInterfaceAttachment(this, 'P4aAttach', {
+      instanceId: fgtActive.instanceId,
+      networkInterfaceId: eniP4a.ref,
+      deviceIndex: '3',
+    });
+
     cdk.Tags.of(fgtActive).add('FortigateHACluster', defaults.clusterTag);
     cdk.Tags.of(fgtActive).add('FortigateHARole', 'active');
+    cdk.Tags.of(fgtActive).add('FortigateHAPriority', String(defaults.haPriorities.active));
 
     // ─── FGT-Passive instance ─────────────────────────────────────────────────
     const fgtPassive = new ec2.Instance(this, 'FgtPassive', {
@@ -237,10 +290,19 @@ end
       deviceIndex: '2',
     });
 
+    new ec2.CfnNetworkInterfaceAttachment(this, 'P4bAttach', {
+      instanceId: fgtPassive.instanceId,
+      networkInterfaceId: eniP4b.ref,
+      deviceIndex: '3',
+    });
+
     cdk.Tags.of(fgtPassive).add('FortigateHACluster', defaults.clusterTag);
     cdk.Tags.of(fgtPassive).add('FortigateHARole', 'passive');
+    cdk.Tags.of(fgtPassive).add('FortigateHAPriority', String(defaults.haPriorities.passive));
 
-    // ─── EIP on Port1-A ───────────────────────────────────────────────────────
+    // ─── Failover WAN VIP on Port1-A ──────────────────────────────────────────
+    // The ONLY EIP carrying the cluster tag. The validator discovers the active
+    // node by who holds this tagged EIP; awsd re-associates it on failover.
     const eip = new ec2.CfnEIP(this, 'EipActive', {
       domain: 'vpc',
       tags: [{ key: 'FortigateHACluster', value: defaults.clusterTag }],
@@ -249,6 +311,27 @@ end
     new ec2.CfnEIPAssociation(this, 'EipAssocActive', {
       allocationId: eip.attrAllocationId,
       networkInterfaceId: eniP1a.ref,
+    });
+
+    // ─── Per-unit HA-management EIPs on Port4 ─────────────────────────────────
+    // Each unit keeps its own mgmt EIP for independent EC2 API egress. These do
+    // NOT failover and must NOT carry the cluster tag (would break active detection).
+    const eipMgmtA = new ec2.CfnEIP(this, 'EipMgmtA', {
+      domain: 'vpc',
+      tags: [{ key: 'FortigateHARole', value: 'active-mgmt' }],
+    });
+    new ec2.CfnEIPAssociation(this, 'EipAssocMgmtA', {
+      allocationId: eipMgmtA.attrAllocationId,
+      networkInterfaceId: eniP4a.ref,
+    });
+
+    const eipMgmtB = new ec2.CfnEIP(this, 'EipMgmtB', {
+      domain: 'vpc',
+      tags: [{ key: 'FortigateHARole', value: 'passive-mgmt' }],
+    });
+    new ec2.CfnEIPAssociation(this, 'EipAssocMgmtB', {
+      allocationId: eipMgmtB.attrAllocationId,
+      networkInterfaceId: eniP4b.ref,
     });
   }
 }

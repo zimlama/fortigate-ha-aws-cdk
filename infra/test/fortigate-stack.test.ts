@@ -34,8 +34,9 @@ describe('FortiGateStack', () => {
     ({ template } = buildStacks());
   });
 
-  test('creates exactly 6 ENIs', () => {
-    template.resourceCountIs('AWS::EC2::NetworkInterface', 6);
+  test('creates exactly 8 ENIs', () => {
+    // port1-4 per unit × 2 units (port4 = dedicated HA-management)
+    template.resourceCountIs('AWS::EC2::NetworkInterface', 8);
   });
 
   test('all ENIs have sourceDestCheck: false', () => {
@@ -44,7 +45,7 @@ describe('FortiGateStack', () => {
     });
   });
 
-  test('IAM role has exactly the 7 required actions as an inline policy', () => {
+  test('IAM role has the required failover actions as an inline policy', () => {
     // CDK renders iam.Role inlinePolicies as AWS::IAM::Role Policies property,
     // NOT as a standalone AWS::IAM::Policy resource.
     template.hasResourceProperties('AWS::IAM::Role', {
@@ -61,6 +62,8 @@ describe('FortiGateStack', () => {
                   'ec2:DescribeInstanceStatus',
                   'ec2:DescribeNetworkInterfaces',
                   'ec2:ReplaceRoute',
+                  'ec2:AssignPrivateIpAddresses',
+                  'ec2:UnassignPrivateIpAddresses',
                 ]),
               }),
             ]),
@@ -70,13 +73,23 @@ describe('FortiGateStack', () => {
     });
   });
 
-  test('EIP exists and is associated to Port1-A ENI', () => {
-    template.resourceCountIs('AWS::EC2::EIP', 1);
-    template.resourceCountIs('AWS::EC2::EIPAssociation', 1);
+  test('three EIPs exist (1 failover WAN VIP + 2 per-unit HA-mgmt)', () => {
+    template.resourceCountIs('AWS::EC2::EIP', 3);
+    template.resourceCountIs('AWS::EC2::EIPAssociation', 3);
     template.hasResourceProperties('AWS::EC2::EIPAssociation', {
       NetworkInterfaceId: Match.anyValue(),
       AllocationId: Match.anyValue(),
     });
+  });
+
+  test('only the failover WAN EIP carries the cluster tag (mgmt EIPs must not)', () => {
+    const eips = template.findResources('AWS::EC2::EIP');
+    const taggedWithCluster = Object.values(eips).filter((eip: any) =>
+      (eip.Properties?.Tags ?? []).some(
+        (t: any) => t.Key === 'FortigateHACluster',
+      ),
+    );
+    expect(taggedWithCluster).toHaveLength(1);
   });
 
   test('two EC2 instances are created (Active + Passive)', () => {

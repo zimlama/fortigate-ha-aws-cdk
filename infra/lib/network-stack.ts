@@ -10,12 +10,15 @@ export class NetworkStack extends cdk.Stack {
   public readonly publicSubnet1a: ec2.Subnet;
   public readonly privateSubnet1a: ec2.Subnet;
   public readonly haSubnet1a: ec2.Subnet;
+  public readonly mgmtSubnet1a: ec2.Subnet;
   public readonly publicSubnet1b: ec2.Subnet;
   public readonly privateSubnet1b: ec2.Subnet;
   public readonly haSubnet1b: ec2.Subnet;
+  public readonly mgmtSubnet1b: ec2.Subnet;
   public readonly sgWan: ec2.SecurityGroup;
   public readonly sgMgmt: ec2.SecurityGroup;
   public readonly sgHa: ec2.SecurityGroup;
+  public readonly sgHaMgmt: ec2.SecurityGroup;
   public readonly rtPrivate1a: ec2.IRouteTable;
   public readonly rtPrivate1b: ec2.IRouteTable;
 
@@ -60,6 +63,14 @@ export class NetworkStack extends cdk.Stack {
       availabilityZone: `${this.region}a`,
     });
 
+    // port4 HA-management — public so each unit reaches the EC2 API independently
+    this.mgmtSubnet1a = new ec2.Subnet(this, 'SubnetMgmt1a', {
+      vpcId: this.vpc.vpcId,
+      cidrBlock: defaults.subnets.mgmtA,
+      availabilityZone: `${this.region}a`,
+      mapPublicIpOnLaunch: false,
+    });
+
     this.publicSubnet1b = new ec2.Subnet(this, 'SubnetPublic1b', {
       vpcId: this.vpc.vpcId,
       cidrBlock: defaults.subnets.publicB,
@@ -79,6 +90,14 @@ export class NetworkStack extends cdk.Stack {
       availabilityZone: `${this.region}b`,
     });
 
+    // port4 HA-management — public so each unit reaches the EC2 API independently
+    this.mgmtSubnet1b = new ec2.Subnet(this, 'SubnetMgmt1b', {
+      vpcId: this.vpc.vpcId,
+      cidrBlock: defaults.subnets.mgmtB,
+      availabilityZone: `${this.region}b`,
+      mapPublicIpOnLaunch: false,
+    });
+
     // ─── Route Tables ────────────────────────────────────────────────────────
     // ec2.Subnet auto-creates a route table + association per subnet.
     // We reuse those — adding routes directly avoids duplicate associations
@@ -92,6 +111,20 @@ export class NetworkStack extends cdk.Stack {
       enablesInternetConnectivity: true,
     });
     this.publicSubnet1b.addRoute('IgwRoute1b', {
+      routerId: igw.ref,
+      routerType: ec2.RouterType.GATEWAY,
+      destinationCidrBlock: '0.0.0.0/0',
+      enablesInternetConnectivity: true,
+    });
+
+    // HA-management subnets: default route to IGW so each unit can reach the EC2 API
+    this.mgmtSubnet1a.addRoute('IgwRouteMgmt1a', {
+      routerId: igw.ref,
+      routerType: ec2.RouterType.GATEWAY,
+      destinationCidrBlock: '0.0.0.0/0',
+      enablesInternetConnectivity: true,
+    });
+    this.mgmtSubnet1b.addRoute('IgwRouteMgmt1b', {
       routerId: igw.ref,
       routerType: ec2.RouterType.GATEWAY,
       destinationCidrBlock: '0.0.0.0/0',
@@ -143,6 +176,16 @@ export class NetworkStack extends cdk.Stack {
     this.sgHa.addEgressRule(
       ec2.Peer.ipv4(defaults.vpcCidr), ec2.Port.udp(defaults.haPort), 'FGCP heartbeat UDP out',
     );
+
+    // sg-ha-mgmt: Port4 — dedicated HA management (public) for EC2 API egress + admin
+    this.sgHaMgmt = new ec2.SecurityGroup(this, 'SgHaMgmt', {
+      vpc: this.vpc,
+      description: 'sg-ha-mgmt: Port4 HA-management - EC2 API egress + admin access',
+      allowAllOutbound: true,   // outbound 443 to the public EC2 API endpoint
+    });
+    this.sgHaMgmt.addIngressRule(ec2.Peer.ipv4(adminCidr), ec2.Port.tcp(443), 'HTTPS GUI');
+    this.sgHaMgmt.addIngressRule(ec2.Peer.ipv4(adminCidr), ec2.Port.tcp(22),  'SSH CLI');
+    this.sgHaMgmt.addIngressRule(ec2.Peer.ipv4(adminCidr), ec2.Port.allIcmp(), 'Reachability probes');
 
     // ─── Outputs ─────────────────────────────────────────────────────────────
     new cdk.CfnOutput(this, 'VpcId', { value: this.vpc.vpcId });

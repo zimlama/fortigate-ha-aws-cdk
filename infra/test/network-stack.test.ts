@@ -19,8 +19,9 @@ describe('NetworkStack', () => {
     template = buildTemplate('10.1.0.0/24');
   });
 
-  test('creates exactly 6 subnets', () => {
-    template.resourceCountIs('AWS::EC2::Subnet', 6);
+  test('creates exactly 8 subnets', () => {
+    // public/private/ha/mgmt per AZ × 2 AZs
+    template.resourceCountIs('AWS::EC2::Subnet', 8);
   });
 
   test('internet gateway is attached to the VPC', () => {
@@ -32,8 +33,18 @@ describe('NetworkStack', () => {
     });
   });
 
-  test('creates 3 security groups', () => {
-    template.resourceCountIs('AWS::EC2::SecurityGroup', 3);
+  test('creates 4 security groups', () => {
+    // sg-wan, sg-mgmt, sg-ha, sg-ha-mgmt
+    template.resourceCountIs('AWS::EC2::SecurityGroup', 4);
+  });
+
+  test('sg-ha-mgmt (port4) allows admin HTTPS from adminCidr', () => {
+    template.hasResourceProperties('AWS::EC2::SecurityGroup', {
+      GroupDescription: Match.stringLikeRegexp('sg-ha-mgmt'),
+      SecurityGroupIngress: Match.arrayWith([
+        Match.objectLike({ IpProtocol: 'tcp', FromPort: 443, CidrIp: '10.1.0.0/24' }),
+      ]),
+    });
   });
 
   test('sg-ha allows port 703 TCP within VPC only', () => {
