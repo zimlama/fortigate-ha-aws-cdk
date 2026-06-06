@@ -3,6 +3,7 @@ import * as cdk from 'aws-cdk-lib';
 import { NetworkStack } from '../lib/network-stack';
 import { FortiGateStack } from '../lib/fortigate-stack';
 import { WatchdogStack } from '../lib/watchdog-stack';
+import { BastionStack } from '../lib/bastion-stack';
 
 const app = new cdk.App();
 
@@ -18,6 +19,12 @@ const fortiGateStack = new FortiGateStack(app, 'FortiGateStack', {
   networkStack,
 });
 fortiGateStack.addDependency(networkStack);
+
+const bastionStack = new BastionStack(app, 'BastionStack', {
+  env,
+  networkStack,
+});
+bastionStack.addDependency(fortiGateStack);
 
 const watchdogStack = new WatchdogStack(app, 'WatchdogStack', { env });
 watchdogStack.addDependency(fortiGateStack);

@@ -40,14 +40,18 @@ else
   echo "⚠️  SKIP_DESTROY is set — stacks will NOT be auto-destroyed."
 fi
 
-# ─── Build validator ─────────────────────────────────────────────────────────
-echo "==> [T+0] Building validator..."
+# ─── Build + package validator ────────────────────────────────────────────────
+# The validator runs on the in-VPC bastion (it must reach the active FortiGate's
+# Port2 PRIVATE IP). Package dist + node_modules so the bastion only needs Node.
+VALIDATOR_TGZ="/tmp/fgt-validator.tgz"
+echo "==> [T+0] Building + packaging validator..."
 (cd "${REPO_DIR}/validator" && npm ci --silent && npm run build 2>/dev/null || npx tsc)
-echo "    Validator built."
+tar czf "${VALIDATOR_TGZ}" -C "${REPO_DIR}/validator" dist node_modules package.json
+echo "    Validator built and packaged (${VALIDATOR_TGZ})."
 
 # ─── Deploy stacks ───────────────────────────────────────────────────────────
 echo ""
-echo "==> [T+0] Deploying stacks (NetworkStack → FortiGateStack → WatchdogStack)..."
+echo "==> [T+0] Deploying stacks (NetworkStack → FortiGateStack → BastionStack → WatchdogStack)..."
 (
   cd "${REPO_DIR}/infra"
   npm ci --silent
@@ -60,11 +64,18 @@ echo "==> [T+0] Deploying stacks (NetworkStack → FortiGateStack → WatchdogSt
 )
 echo "    Deploy complete."
 
+# ─── Upload validator artifact to the bastion's S3 bucket ─────────────────────
+BUCKET=$(node -e "console.log(require('/tmp/fgt-outputs.json').BastionStack.ValidatorBucketName)")
+echo ""
+echo "==> Uploading validator to s3://${BUCKET}/validator.tgz ..."
+AWS_PROFILE="${PROFILE}" aws s3 cp "${VALIDATOR_TGZ}" "s3://${BUCKET}/validator.tgz" --region "${REGION}"
+echo "    Upload complete."
+
 # ─── Wait for FortiGate to boot and establish HA heartbeat ───────────────────
 # CDK deploy completes when EC2 state = "running", but FortiGate VM needs
 # ~5 min more to: boot FortiOS, apply UserData config, and establish the FGCP
 # unicast heartbeat with the peer. Testing before HA is up = no failover occurs.
-HA_BOOT_WAIT="${HA_BOOT_WAIT:-300}"
+HA_BOOT_WAIT="${HA_BOOT_WAIT:-420}"
 echo ""
 echo "==> Waiting ${HA_BOOT_WAIT}s for FortiGate HA to boot and establish heartbeat..."
 sleep "${HA_BOOT_WAIT}"
