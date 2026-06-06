@@ -29,31 +29,39 @@ describe('WatchdogStack', () => {
     });
   });
 
-  test('Lambda timeout is 30 seconds', () => {
+  test('Lambda timeout covers CloudFormation deletes (900s)', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
-      Timeout: 30,
+      Timeout: 900,
     });
   });
 
-  test('CodeBuild project uses buildspec with npm ci and cdk destroy', () => {
-    template.hasResourceProperties('AWS::CodeBuild::Project', {
-      Source: Match.objectLike({
-        BuildSpec: Match.serializedJson(
+  test('no CodeBuild project (deletes go straight through CloudFormation)', () => {
+    template.resourceCountIs('AWS::CodeBuild::Project', 0);
+  });
+
+  test('Lambda role can delete stacks and lab resources', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
           Match.objectLike({
-            phases: Match.objectLike({
-              install: Match.objectLike({ commands: Match.arrayWith(['npm ci']) }),
-              build:   Match.objectLike({ commands: Match.arrayWith(['npx cdk destroy --all --force --ci']) }),
-            }),
+            Action: Match.arrayWith([
+              'cloudformation:DeleteStack',
+              'cloudformation:DescribeStacks',
+            ]),
           }),
-        ),
+        ]),
       }),
     });
   });
 
-  test('CodeBuild project uses STANDARD_7_0 build image', () => {
-    template.hasResourceProperties('AWS::CodeBuild::Project', {
+  test('Lambda knows which stacks to delete and in which order', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
       Environment: Match.objectLike({
-        Image: Match.stringLikeRegexp('aws/codebuild/standard:7.0'),
+        Variables: Match.objectLike({
+          IMPORTER_STACKS: 'BastionStack,FortiGateStack',
+          EXPORTER_STACKS: 'NetworkStack',
+          SELF_STACK: 'WatchdogStack',
+        }),
       }),
     });
   });
