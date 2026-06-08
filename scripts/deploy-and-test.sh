@@ -13,6 +13,10 @@
 
 set -euo pipefail
 
+# Guard: this script is the only authorized way to deploy lab stacks.
+# Direct `cdk deploy` is blocked in bin/app.ts unless DEPLOY_VIA_SCRIPT=1.
+export DEPLOY_VIA_SCRIPT=1
+
 PROFILE="${AWS_PROFILE:-default}"
 REGION="${AWS_REGION:-us-east-1}"
 ADMIN_CIDR="${ADMIN_CIDR:-0.0.0.0/0}"
