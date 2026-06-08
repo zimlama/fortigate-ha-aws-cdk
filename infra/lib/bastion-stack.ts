@@ -55,7 +55,7 @@ export class BastionStack extends cdk.Stack {
       fromPort: 443,
       toPort: 443,
       sourceSecurityGroupId: sgBastion.securityGroupId,
-      description: 'Bastion -> Port2 mgmt probe',
+      description: 'Bastion to Port2 mgmt probe',
     });
 
     // ─── IAM role ─────────────────────────────────────────────────────────────
