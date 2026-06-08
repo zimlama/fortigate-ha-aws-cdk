@@ -173,24 +173,25 @@ echo "==> [3/3] Setting up Cost Anomaly Detection..."
 
 # Try to create a dedicated monitor; if the account limit is hit, fall back to
 # the first existing DIMENSIONAL monitor (accounts allow only one).
+# || true inside $() is required: set -e exits on non-zero command substitutions.
 MONITOR_ARN=$(aws --profile "${PROFILE}" ce create-anomaly-monitor \
   --anomaly-monitor "{
     \"MonitorName\": \"lab-anomaly-monitor\",
     \"MonitorType\": \"DIMENSIONAL\",
     \"MonitorDimension\": \"SERVICE\"
   }" \
-  --query AnomalyMonitorArn --output text 2>/dev/null)
+  --query AnomalyMonitorArn --output text 2>/dev/null || true)
 
 if [[ -z "${MONITOR_ARN}" ]]; then
   MONITOR_ARN=$(aws --profile "${PROFILE}" ce get-anomaly-monitors \
     --query 'AnomalyMonitors[?MonitorName==`lab-anomaly-monitor`].MonitorArn | [0]' \
-    --output text 2>/dev/null)
+    --output text 2>/dev/null || true)
 fi
 
 if [[ -z "${MONITOR_ARN}" || "${MONITOR_ARN}" == "None" ]]; then
   MONITOR_ARN=$(aws --profile "${PROFILE}" ce get-anomaly-monitors \
     --query 'AnomalyMonitors[0].MonitorArn' \
-    --output text 2>/dev/null)
+    --output text 2>/dev/null || true)
   echo "    Note: using existing monitor (account limit reached): ${MONITOR_ARN}"
 fi
 
