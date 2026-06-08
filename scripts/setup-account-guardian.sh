@@ -171,28 +171,44 @@ aws --profile "${PROFILE}" budgets create-budget \
 echo ""
 echo "==> [3/3] Setting up Cost Anomaly Detection..."
 
+# Try to create a dedicated monitor; if the account limit is hit, fall back to
+# the first existing DIMENSIONAL monitor (accounts allow only one).
 MONITOR_ARN=$(aws --profile "${PROFILE}" ce create-anomaly-monitor \
   --anomaly-monitor "{
     \"MonitorName\": \"lab-anomaly-monitor\",
     \"MonitorType\": \"DIMENSIONAL\",
     \"MonitorDimension\": \"SERVICE\"
   }" \
-  --query AnomalyMonitorArn --output text 2>/dev/null || \
-  aws --profile "${PROFILE}" ce list-anomaly-monitors \
-    --query 'AnomalyMonitors[?MonitorName==`lab-anomaly-monitor`].MonitorArn' \
-    --output text)
+  --query AnomalyMonitorArn --output text 2>/dev/null)
 
-aws --profile "${PROFILE}" ce create-anomaly-subscription \
-  --anomaly-subscription "{
-    \"SubscriptionName\": \"lab-anomaly-alert\",
-    \"MonitorArnList\": [\"${MONITOR_ARN}\"],
-    \"Subscribers\": [{
-      \"Address\": \"${ALERT_EMAIL}\",
-      \"Type\": \"EMAIL\"
-    }],
-    \"Threshold\": 5,
-    \"Frequency\": \"DAILY\"
-  }" && echo "    Anomaly detection configured." || echo "    Anomaly subscription already exists — skipping."
+if [[ -z "${MONITOR_ARN}" ]]; then
+  MONITOR_ARN=$(aws --profile "${PROFILE}" ce get-anomaly-monitors \
+    --query 'AnomalyMonitors[?MonitorName==`lab-anomaly-monitor`].MonitorArn | [0]' \
+    --output text 2>/dev/null)
+fi
+
+if [[ -z "${MONITOR_ARN}" || "${MONITOR_ARN}" == "None" ]]; then
+  MONITOR_ARN=$(aws --profile "${PROFILE}" ce get-anomaly-monitors \
+    --query 'AnomalyMonitors[0].MonitorArn' \
+    --output text 2>/dev/null)
+  echo "    Note: using existing monitor (account limit reached): ${MONITOR_ARN}"
+fi
+
+if [[ -z "${MONITOR_ARN}" || "${MONITOR_ARN}" == "None" ]]; then
+  echo "    ERROR: could not resolve an anomaly monitor ARN — skipping subscription." >&2
+else
+  aws --profile "${PROFILE}" ce create-anomaly-subscription \
+    --anomaly-subscription "{
+      \"SubscriptionName\": \"lab-anomaly-alert\",
+      \"MonitorArnList\": [\"${MONITOR_ARN}\"],
+      \"Subscribers\": [{
+        \"Address\": \"${ALERT_EMAIL}\",
+        \"Type\": \"EMAIL\"
+      }],
+      \"Threshold\": 5,
+      \"Frequency\": \"DAILY\"
+    }" && echo "    Anomaly detection configured." || echo "    Anomaly subscription already exists — skipping."
+fi
 
 echo ""
 echo "✅  Account guardian active:"
