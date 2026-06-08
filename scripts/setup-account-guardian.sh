@@ -192,7 +192,7 @@ aws --profile "${PROFILE}" ce create-anomaly-subscription \
     }],
     \"Threshold\": 5,
     \"Frequency\": \"DAILY\"
-  }" 2>/dev/null && echo "    Anomaly detection configured." || echo "    Anomaly subscription already exists — skipping."
+  }" && echo "    Anomaly detection configured." || echo "    Anomaly subscription already exists — skipping."
 
 echo ""
 echo "✅  Account guardian active:"
