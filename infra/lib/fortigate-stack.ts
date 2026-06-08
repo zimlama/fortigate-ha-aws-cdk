@@ -218,34 +218,18 @@ end
       }],
     });
 
-    // Override Port1 to use our pre-created ENI.
-    // Must delete SubnetId and SecurityGroupIds — AWS rejects requests that specify
-    // both NetworkInterfaces and instance-level subnet/SG (they are mutually exclusive).
+    // Attach all 4 ENIs at launch so FortiOS UserData runs with all interfaces present.
+    // Sequential post-boot attachment via CfnNetworkInterfaceAttachment causes UserData
+    // to execute before port2/3/4 exist — silently breaking HA heartbeat and SDN connector.
     const cfnFgtActive = fgtActive.node.defaultChild as ec2.CfnInstance;
-    cfnFgtActive.networkInterfaces = [{
-      deviceIndex: '0',
-      networkInterfaceId: eniP1a.ref,
-    }];
+    cfnFgtActive.networkInterfaces = [
+      { deviceIndex: '0', networkInterfaceId: eniP1a.ref },
+      { deviceIndex: '1', networkInterfaceId: eniP2a.ref },
+      { deviceIndex: '2', networkInterfaceId: eniP3a.ref },
+      { deviceIndex: '3', networkInterfaceId: eniP4a.ref },
+    ];
     cfnFgtActive.addPropertyDeletionOverride('SubnetId');
     cfnFgtActive.addPropertyDeletionOverride('SecurityGroupIds');
-
-    new ec2.CfnNetworkInterfaceAttachment(this, 'P2aAttach', {
-      instanceId: fgtActive.instanceId,
-      networkInterfaceId: eniP2a.ref,
-      deviceIndex: '1',
-    });
-
-    new ec2.CfnNetworkInterfaceAttachment(this, 'P3aAttach', {
-      instanceId: fgtActive.instanceId,
-      networkInterfaceId: eniP3a.ref,
-      deviceIndex: '2',
-    });
-
-    new ec2.CfnNetworkInterfaceAttachment(this, 'P4aAttach', {
-      instanceId: fgtActive.instanceId,
-      networkInterfaceId: eniP4a.ref,
-      deviceIndex: '3',
-    });
 
     cdk.Tags.of(fgtActive).add('FortigateHACluster', defaults.clusterTag);
     cdk.Tags.of(fgtActive).add('FortigateHARole', 'active');
@@ -271,30 +255,14 @@ end
     });
 
     const cfnFgtPassive = fgtPassive.node.defaultChild as ec2.CfnInstance;
-    cfnFgtPassive.networkInterfaces = [{
-      deviceIndex: '0',
-      networkInterfaceId: eniP1b.ref,
-    }];
+    cfnFgtPassive.networkInterfaces = [
+      { deviceIndex: '0', networkInterfaceId: eniP1b.ref },
+      { deviceIndex: '1', networkInterfaceId: eniP2b.ref },
+      { deviceIndex: '2', networkInterfaceId: eniP3b.ref },
+      { deviceIndex: '3', networkInterfaceId: eniP4b.ref },
+    ];
     cfnFgtPassive.addPropertyDeletionOverride('SubnetId');
     cfnFgtPassive.addPropertyDeletionOverride('SecurityGroupIds');
-
-    new ec2.CfnNetworkInterfaceAttachment(this, 'P2bAttach', {
-      instanceId: fgtPassive.instanceId,
-      networkInterfaceId: eniP2b.ref,
-      deviceIndex: '1',
-    });
-
-    new ec2.CfnNetworkInterfaceAttachment(this, 'P3bAttach', {
-      instanceId: fgtPassive.instanceId,
-      networkInterfaceId: eniP3b.ref,
-      deviceIndex: '2',
-    });
-
-    new ec2.CfnNetworkInterfaceAttachment(this, 'P4bAttach', {
-      instanceId: fgtPassive.instanceId,
-      networkInterfaceId: eniP4b.ref,
-      deviceIndex: '3',
-    });
 
     cdk.Tags.of(fgtPassive).add('FortigateHACluster', defaults.clusterTag);
     cdk.Tags.of(fgtPassive).add('FortigateHARole', 'passive');
