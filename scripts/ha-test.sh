@@ -118,4 +118,21 @@ echo "${INV}" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>
 RC=$(echo "${INV}" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const r=JSON.parse(d).ResponseCode;console.log(Number.isInteger(r)&&r>=0&&r<=255?r:1)})")
 echo ""
 echo "==> Validator exit code: ${RC} (SSM status: ${STATUS})"
+
+# ─── Debug hints on failure ───────────────────────────────────────────────────
+if [[ "${RC}" -ne 0 ]]; then
+  ACTIVE_PORT2=$(node -e "try{console.log(require('${OUTPUTS_FILE}').FortiGateStack.FgtActivePort2Ip||'')}catch(e){}" 2>/dev/null || true)
+  PASSIVE_PORT2=$(node -e "try{console.log(require('${OUTPUTS_FILE}').FortiGateStack.FgtPassivePort2Ip||'')}catch(e){}" 2>/dev/null || true)
+  echo ""
+  echo "─── SSH debug (requires SKIP_DESTROY=1 to keep stacks alive) ───────────────"
+  echo "  Open bastion shell:"
+  echo "    aws ssm start-session --target ${BASTION_ID} --region ${REGION} --profile ${PROFILE}"
+  echo "  Then from the bastion (password = HA_PASSWORD):"
+  [[ -n "${ACTIVE_PORT2}" ]]  && echo "    ssh admin@${ACTIVE_PORT2}   # was active (now terminated)"
+  [[ -n "${PASSIVE_PORT2}" ]] && echo "    ssh admin@${PASSIVE_PORT2}  # passive — should be promoting"
+  echo "  FortiOS: get system ha status"
+  echo "  FortiOS: diagnose sys sdn-connector status aws"
+  echo "────────────────────────────────────────────────────────────────────────────"
+fi
+
 exit "${RC}"

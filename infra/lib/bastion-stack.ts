@@ -58,6 +58,15 @@ export class BastionStack extends cdk.Stack {
       description: 'Bastion to Port2 mgmt probe',
     });
 
+    new ec2.CfnSecurityGroupIngress(this, 'BastionToPort2Ssh', {
+      groupId: sgMgmt.securityGroupId,
+      ipProtocol: 'tcp',
+      fromPort: 22,
+      toPort: 22,
+      sourceSecurityGroupId: sgBastion.securityGroupId,
+      description: 'Bastion to Port2 SSH debug',
+    });
+
     // ─── IAM role ─────────────────────────────────────────────────────────────
     const role = new iam.Role(this, 'BastionRole', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),

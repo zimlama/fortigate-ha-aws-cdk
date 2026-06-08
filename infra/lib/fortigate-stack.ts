@@ -333,5 +333,15 @@ end
       allocationId: eipMgmtB.attrAllocationId,
       networkInterfaceId: eniP4b.ref,
     });
+
+    // ─── Outputs — debug SSH via bastion → Port2 ──────────────────────────────
+    new cdk.CfnOutput(this, 'FgtActivePort2Ip', {
+      value: eniP2a.attrPrimaryPrivateIpAddress,
+      description: 'Active FortiGate Port2 private IP (SSH from bastion: ssh admin@<ip>)',
+    });
+    new cdk.CfnOutput(this, 'FgtPassivePort2Ip', {
+      value: eniP2b.attrPrimaryPrivateIpAddress,
+      description: 'Passive FortiGate Port2 private IP (SSH from bastion: ssh admin@<ip>)',
+    });
   }
 }
