@@ -69,12 +69,18 @@ describe('BastionStack', () => {
     });
   });
 
-  test('opens exactly one cross-stack ingress to Port2 (443) for the bastion SG', () => {
-    template.resourceCountIs('AWS::EC2::SecurityGroupIngress', 1);
+  test('opens cross-stack ingress for the bastion SG: Port2 443/22 and Port4 22', () => {
+    // BastionToPort2 (443), BastionToPort2Ssh (22), BastionToPort4Ssh (22)
+    template.resourceCountIs('AWS::EC2::SecurityGroupIngress', 3);
     template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
       IpProtocol: 'tcp',
       FromPort: 443,
       ToPort: 443,
+    });
+    template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+      IpProtocol: 'tcp',
+      FromPort: 22,
+      ToPort: 22,
     });
   });
 

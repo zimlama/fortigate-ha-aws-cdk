@@ -1,55 +1,62 @@
 # Architecture Decision Records — fortigate-ha-aws-cdk
 
-> Six formal decisions made before writing any code.
+> Formal decisions. RFC-001–006 were made before writing code; RFC-007–008 were added
+> after implementation surfaced the real failure modes (honest engineering record).
 > Format: Context → Decision → Consequences → Alternatives Rejected.
 
 ---
 
-## RFC-001 — Admin access on Port2 (INTERNAL), not on MGMT
+## RFC-001 — Prove cross-AZ FGCP failover; management on Port4 (HA-MGMT)
 
-**Status:** Accepted  
+**Status:** Accepted (revised 2026-06-09 — see "Revision" below)  
 **Date:** 2026-06-03
 
 ### Context
 
-FortiGate HA uses the FGCP protocol to elect a new Active node. When failover occurs, FortiOS triggers a callback that calls the AWS EC2 API to:
-1. Reassociate the Elastic IP from the old Active's Port1 to the new Active's Port1.
-2. Update private route tables to point to the new Active's Port2.
+FortiGate HA uses the FGCP protocol to elect a new Active node. On failover FortiOS's
+AWS SDN connector calls the EC2 API to (1) reassociate the cluster Elastic IP to the new
+Active's Port1, and (2) update the private route tables to the new Active's Port2. Across
+two AZs there is no L2, so this API callback is the *only* failover mechanism — making it
+the thing worth proving end-to-end.
 
-The **MGMT interface is not part of this callback**. It has a fixed IP that stays with the original instance — meaning when the Passive takes over, the new Active has no management interface accessible from the operator's network.
-
-This is not a bug. It is documented behavior: MGMT is designed for out-of-band management on a dedicated management network. The FGCP callback was designed for data-plane interfaces (Port1/Port2), not for MGMT.
+The **MGMT service does not follow the active unit**. The original plan was to put admin
+access on Port2 (a data-plane interface covered by the route-table update). Testing
+disproved that: Port2 does not reliably answer management on a not-yet-promoted / standby
+unit, even when AWS reports the ENI as up.
 
 ### Decision
 
-Configure `allowaccess https ssh` on **Port2 (INTERNAL)**, not on MGMT. Port2 is covered by the FGCP callback (route table update), so management connectivity follows the Active node automatically.
+1. The project's thesis and pass/fail gate is **EIP migration** — the validator proves the
+   cluster EIP moves to the surviving unit on failover.
+2. Management lives on **Port4 (HA-MGMT)** — a dedicated interface, active on *both* units
+   at all times, with a per-unit EIP for independent EC2-API egress. `allowaccess https ssh`
+   is set on Port4 (and on Port2 for in-VPC data-side admin), and the FortiOS
+   `ha-mgmt-interfaces` feature binds management to Port4.
+3. Port2 HTTPS reachability is kept as **informational** telemetry, not a gate.
 
-```
-config system interface
-  edit "port2"
-    set allowaccess https ssh
-    set alias "MGMT-Port2"
-  next
-end
-```
+### Revision (2026-06-09)
+
+The original decision ("admin on Port2, not MGMT") was **partially wrong and has been
+corrected**. Port2 is data-plane and unreliable on standby; Port4 (HA-MGMT) is the correct
+management path. Kept here as an honest engineering record — see `lessons-learned.md`
+#9/#10. The deeper failure that blocked all of this was the heartbeat SG (see RFC-007).
 
 ### Consequences
 
 **Positive:**
-- Management access survives every failover automatically.
-- The route table update (`ec2:ReplaceRoute`) is already part of the failover callback — no additional AWS permissions required.
-- Cross-AZ failover works identically: Port2 is a private ENI, and the route table update works across AZs.
+- Management is reachable on both units regardless of FGCP state (Port4 is always up).
+- EIP migration is an unambiguous, API-observable proof of failover.
 
 **Negative:**
-- Port2 is on the private subnet (10.0.2.0/24 / 10.0.12.0/24), not directly internet-accessible. Access requires a VPN or bastion in the same VPC — which is the correct security posture anyway.
-- Operators must know not to connect to the MGMT IP after failover.
+- Port4 adds a 4th ENI/subnet per unit and a per-unit EIP.
+- Operators must use Port4 (not Port2/MGMT) for post-failover management.
 
 ### Alternatives rejected
 
 | Alternative | Reason rejected |
 |---|---|
-| Use MGMT for admin (default) | Loses management on every failover — the exact problem this repo exists to solve |
-| HA management interface (FortiOS feature) | Requires careful NIC ordering in AWS; complex and fragile vs. the Port2 approach |
+| Admin on MGMT (default) | MGMT service has no failover coverage |
+| Admin on Port2 (original plan) | Disproven — Port2 is data-plane, unreliable on standby |
 
 ---
 
@@ -219,3 +226,83 @@ Implement **two independent cleanup mechanisms**:
 |---|---|
 | Bash trap only | Fragile — killed process, closed terminal, or hung command all bypass it. |
 | Lambda only | Doesn't handle the common case of the script completing before 30 minutes. |
+
+---
+
+## RFC-007 — Heartbeat security group: allow all traffic between cluster members
+
+**Status:** Accepted  
+**Date:** 2026-06-09 (post-implementation — this was the project's root-cause fix)
+
+### Context
+
+`sg-ha` (Port3) was initially scoped to TCP/UDP 703 — the documented FGCP "HA port".
+Failover never worked: `get system ha status` showed `number of member: 1` ("only member
+in the cluster") on both units. The FGCP heartbeat is **not** TCP/UDP 703 (that is
+session-sync); it is protocol-level packets (EtherType 0x8890/0x8891/0x8893, encapsulated
+for unicast on AWS). The port-scoped rule silently dropped the heartbeat, so the two units
+never formed a cluster and there was nothing to fail over to. Three runs were lost chasing
+downstream IAM/EIP symptoms before SSH diagnostics revealed the 1-member cluster.
+
+### Decision
+
+Open `sg-ha` to **all traffic between cluster members** via a self-referencing rule. Both
+Port3 ENIs share `sg-ha`, so the group references itself — open between members, closed to
+everything else.
+
+```typescript
+this.sgHa = new ec2.SecurityGroup(this, 'SgHa', { vpc, allowAllOutbound: true });
+this.sgHa.addIngressRule(this.sgHa, ec2.Port.allTraffic(),
+  'FGCP heartbeat + session sync between cluster members');
+```
+
+### Consequences
+
+**Positive:** the cluster forms; failover and EIP migration work with no other change.
+The self-reference keeps the opening scoped to the two FortiGate Port3 ENIs only.
+
+**Negative:** broader than a port list, but correctly bounded to cluster members. Trying to
+enumerate every FGCP protocol/port is fragile and was the cause of the outage.
+
+### Alternatives rejected
+
+| Alternative | Reason rejected |
+|---|---|
+| Scope to TCP/UDP 703 | Drops the actual heartbeat — the root-cause bug |
+| Scope to the VPC CIDR | Wider than self-reference and still must list protocols |
+
+---
+
+## RFC-008 — Layered diagnostics + pre-flight gate
+
+**Status:** Accepted  
+**Date:** 2026-06-09
+
+### Context
+
+The AWS control plane cannot see FGCP cluster state — the validator infers role from EIP
+ownership, so it reported the same symptom (`no EIP holder`) for two different root causes.
+Reasoning from AWS-API output alone cost multiple full deploy cycles.
+
+### Decision
+
+Capture three telemetry layers on every run, persisted to a log that survives auto-destroy:
+EC2 serial console (boot), FortiOS runtime over SSH on Port4 (`get system ha status`, HA
+history, config-sync checksums, `awsd` status), and a CloudTrail lookup of the EIP/route API
+calls. Add a **pre-flight gate** that asserts `number of member: 2` before injecting any
+fault — aborting in ~30 s instead of burning a full run on a non-cluster.
+
+### Consequences
+
+**Positive:** failures are diagnosable from one run; the pre-flight gate fails fast and cheap.
+Diagnostics are zero added infra (console + SSH-via-bastion + free CloudTrail event lookup).
+
+**Negative:** more script complexity; SSH diagnostics require the admin password set in
+UserData and bastion→Port4 reachability.
+
+### Alternatives rejected
+
+| Alternative | Reason rejected |
+|---|---|
+| AWS-API telemetry only | Blind to FGCP cluster state — the original mistake |
+| CloudWatch Logs from FortiOS | Needs an in-FortiOS agent + a log group (cost) for little gain on a one-shot lab |

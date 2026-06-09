@@ -186,59 +186,11 @@ Supply a stack id (NetworkStack, FortiGateStack, WatchdogStack) to display its t
 
 ---
 
-## STEP 4: Install Dependencies
-
-### 4.1 Install npm packages
-
-```bash
-npm install
-```
-
-Expected: `added X packages, audited Y packages`.
-
-### 4.2 Verify installation
-
-```bash
-npm list | head -20
-```
-
-Expected packages:
-- `aws-cdk-lib`
-- `aws-cdk`
-- `typescript`
-- `ts-node`
-
----
-
-## STEP 5: Synthesize CDK (Validate Configuration)
-
-### 5.1 Synthesize templates
-
-```bash
-npx cdk synth
-```
-
-**What this does:**
-- Looks up FortiGate AMI in your region
-- Generates CloudFormation templates
-- Validates configuration syntax
-
-**Expected output:**
-```
-Searching for AMI in 064625181580:us-east-1
-Successfully synthesized to /path/to/cdk.out
-Supply a stack id (NetworkStack, FortiGateStack, WatchdogStack) to display its template.
-```
-
-**If error:** Check cdk.json, AWS CLI credentials, and Marketplace AMI subscription.
-
----
-
 ## STEP 6: Deploy to AWS (CREATE INFRASTRUCTURE)
 
 ### 6.1 Use the pipeline script (recommended)
 
-The script handles build → deploy → failover test → auto-destroy in one command:
+The script runs the full pipeline in one command:
 
 ```bash
 cd repo
@@ -248,6 +200,22 @@ HA_PASSWORD=YourPasswordHere \
 ```
 
 No `AWS_PROFILE` needed if using the `default` profile.
+
+**Pipeline stages:** build/stage validator → `cdk deploy --all` (4 stacks) →
+`HA_BOOT_WAIT` (~7 min for HA to form) → `ha-test.sh`:
+
+1. **Pre-flight gate** — SSH the Active on Port4, assert `number of member: 2`.
+   Aborts (exit 2, nothing terminated) if the cluster didn't form.
+2. **Fault injection** — terminate the Active.
+3. **Validation** — the bastion runs the validator; gate = EIP migrated to the survivor.
+4. **Diagnostics (always)** — EC2 console output, FortiOS SSH on Port4
+   (`get system ha status`, HA history, checksums, `awsd` status, NIC counters),
+   and a CloudTrail lookup of the EIP/route API calls.
+5. **Auto-destroy** — `trap cleanup EXIT` tears down all stacks.
+
+The full run is tee'd to `/tmp/fgt-ha-run-<timestamp>.log` — it survives the teardown
+and is your forensic record. Exit `0` = `FAILOVER PASSED ✅`. See
+[`05-troubleshooting-ha-runbook.md`](05-troubleshooting-ha-runbook.md) to read the output.
 
 ### 6.2 Or deploy manually (step by step)
 
@@ -261,20 +229,21 @@ npx cdk deploy --all \
 
 **When prompted:** `Do you wish to continue?` → Type `y` and press Enter.
 
-**What gets created:**
-1. **NetworkStack:** VPC (10.0.0.0/16), 6 subnets, IGW, route tables, 3 security groups
-2. **FortiGateStack:** 2× EC2 instances (c6in.xlarge), 6 ENIs, EIP, IAM role
-3. **WatchdogStack:** EventBridge rule + Lambda (auto-destroys infra after 30 min)
+**What gets created (4 stacks):**
+1. **NetworkStack:** VPC (10.0.0.0/16), 8 subnets, IGW, route tables, 4 security groups
+   (sg-wan, sg-mgmt, sg-ha self-referencing, sg-ha-mgmt)
+2. **FortiGateStack:** 2× EC2 instances (c6in.xlarge), 8 ENIs (Port1-4 per unit),
+   cluster EIP + 2 per-unit mgmt EIPs, IAM role, UserData
+3. **BastionStack:** t3.micro (SSM-managed) + S3 bucket — in-VPC validator/diagnostics vantage
+4. **WatchdogStack:** EventBridge rule + Lambda + CodeBuild (auto-destroys infra after 30 min)
 
-**Duration:** ~5-10 minutes.
+**Duration:** ~12 minutes (plus a ~7 min HA boot wait before the failover test).
 
-**Expected output at end:**
+**Expected outputs at end:**
 ```
-✅ Deployment successful
-Stack outputs:
-- FgtActiveManagementIP: 10.0.2.x
-- FgtPassiveManagementIP: 10.0.12.x
-- EIP (Public WAN): xxx.xxx.xxx.xxx
+FgtActivePort2Ip / FgtPassivePort2Ip   data interface (bastion SSH fallback)
+FgtActivePort4Ip / FgtPassivePort4Ip   HA-MGMT — reliable SSH diagnostics path
+BastionInstanceId / ValidatorBucketName
 ```
 
 ---
@@ -297,7 +266,7 @@ Expected: All stacks show `CREATE_COMPLETE`.
 ```bash
 aws ec2 describe-instances \
   --region us-east-1 \
-  --filters "Name=tag:FortigateHACluster,Values=fgt-ha-demo" \
+  --filters "Name=tag:FortigateHACluster,Values=fortigate-ha" \
   --query 'Reservations[*].Instances[*].[InstanceId,InstanceType,State.Name,Tags[?Key==`FortigateHARole`].Value|[0]]' \
   --output table
 ```
@@ -315,7 +284,7 @@ Expected:
 ```bash
 aws ec2 describe-addresses \
   --region us-east-1 \
-  --filters "Name=tag:FortigateHACluster,Values=fgt-ha-demo" \
+  --filters "Name=tag:FortigateHACluster,Values=fortigate-ha" \
   --query 'Addresses[*].[PublicIp,AssociationId,NetworkInterfaceId]' \
   --output table
 ```
@@ -341,14 +310,10 @@ Note the IP (e.g., `10.0.2.50`).
 ### 8.2 SSH into Active (via bastion or VPN)
 
 ```bash
-# Option 1: If you have direct VPC access
-ssh -i <your-key.pem> admin@<ACTIVE_MGMT_IP>
-# Default password: blank (no password required initially)
-
-# Option 2: If behind NAT, use EC2 Instance Connect
-aws ssm start-session \
-  --target i-xxxxxxxxxxxx \
-  --region us-east-1
+# Reach the FortiGate from the in-VPC bastion via SSM, then SSH on Port4 (HA-MGMT).
+aws ssm start-session --target <BastionInstanceId> --region us-east-1
+# From the bastion (admin password = HA_PASSWORD; Port4 is the reliable mgmt path):
+ssh admin@<FgtActivePort4Ip>
 ```
 
 ### 8.3 Verify HA status
@@ -402,7 +367,7 @@ Expected: Both running.
 ```bash
 aws ec2 describe-addresses \
   --region us-east-1 \
-  --filters "Name=tag:FortigateHACluster,Values=fgt-ha-demo" \
+  --filters "Name=tag:FortigateHACluster,Values=fortigate-ha" \
   --query 'Addresses[0].[PublicIp,AssociationId]' \
   --output table
 ```
@@ -437,7 +402,7 @@ aws ec2 terminate-instances --instance-ids $ACTIVE_ID --region us-east-1
 ```bash
 watch -n 2 'aws ec2 describe-instances \
   --region us-east-1 \
-  --filters "Name=tag:FortigateHACluster,Values=fgt-ha-demo" \
+  --filters "Name=tag:FortigateHACluster,Values=fortigate-ha" \
   --query "Reservations[*].Instances[*].[Tags[?Key==\`FortigateHARole\`].Value|[0],State.Name]" \
   --output table'
 ```
@@ -447,7 +412,7 @@ watch -n 2 'aws ec2 describe-instances \
 ```bash
 watch -n 2 'aws ec2 describe-addresses \
   --region us-east-1 \
-  --filters "Name=tag:FortigateHACluster,Values=fgt-ha-demo" \
+  --filters "Name=tag:FortigateHACluster,Values=fortigate-ha" \
   --query "Addresses[0].[PublicIp,AssociationId,NetworkInterfaceId]" \
   --output table'
 ```
@@ -573,15 +538,24 @@ aws cloudformation describe-stack-events \
 
 ---
 
-### Problem: Failover doesn't happen (Passive stays Passive after Active termination)
+### Problem: Failover doesn't happen (EIP never migrates; "no EIP holder found")
 
-**Cause:** HA heartbeat misconfigured or Port3 ENI not attached.
+**Most common cause:** the HA cluster never formed — `get system ha status` shows
+`number of member: 1` ("only member in the cluster"). The FGCP heartbeat is being
+dropped, so the units never see each other and there is nothing to fail over to.
 
 **Fix:**
-1. SSH to surviving instance
-2. Check HA status: `get sys ha status`
-3. Check Port3 IP: `get sys interface port3`
-4. Verify security group allows UDP 703 between subnets
+1. SSH the surviving unit on **Port4** (HA-MGMT): `ssh admin@<FgtPassivePort4Ip>`
+   (password = `HA_PASSWORD`).
+2. `get system ha status` → confirm `number of member`. If `1` → heartbeat problem.
+3. **Check `sg-ha`** — it must allow **ALL traffic between cluster members**
+   (self-referencing rule), NOT just TCP/UDP 703. The FGCP heartbeat is protocol-level
+   (EtherType 0x8890/0x8891/0x8893), so a port-scoped rule silently drops it. This was
+   the project's root-cause bug — see `lessons-learned.md` #8 and
+   `05-troubleshooting-ha-runbook.md` §4.A.
+4. The pre-flight gate in `ha-test.sh` catches this in ~30 s (aborts before terminating).
+   If the cluster DID form (`member: 2`) but the EIP didn't move, the fault is in the
+   SDN connector / IAM — see runbook §4.B (`diagnose test application awsd 1`, CloudTrail).
 
 ---
 
@@ -627,6 +601,6 @@ aws cloudformation describe-stack-events \
 
 ---
 
-**Last updated:** 2026-06-04  
+**Last updated:** 2026-06-09  
 **Author:** Leonardo Mejía  
-**Status:** Ready for production deployment
+**Status:** Failover proven end-to-end (EIP migration validated; see `lessons-learned.md`)

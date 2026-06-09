@@ -26,6 +26,15 @@ SKIP_DESTROY="${SKIP_DESTROY:-}"
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# ─── Persist full run log (survives the destroy trap) ─────────────────────────
+# The cleanup trap tears down every stack on EXIT, so any diagnostics printed to
+# the terminal (FortiGate console output, validator per-poll state, CDK errors)
+# would vanish with it. Tee everything to a timestamped file on the laptop — it
+# lives outside AWS and is the forensic record to review after the run.
+LOG_FILE="${LOG_FILE:-/tmp/fgt-ha-run-$(date +%Y%m%d-%H%M%S).log}"
+exec > >(tee -a "${LOG_FILE}") 2>&1
+echo "==> Full run log: ${LOG_FILE}"
+
 # ─── Cleanup trap ────────────────────────────────────────────────────────────
 cleanup() {
   echo ""
@@ -49,7 +58,7 @@ fi
 # Port2 PRIVATE IP). Package dist + node_modules so the bastion only needs Node.
 VALIDATOR_TGZ="/tmp/fgt-validator.tgz"
 echo "==> [T+0] Building + packaging validator..."
-(cd "${REPO_DIR}/validator" && npm ci --silent && npm run build 2>/dev/null || npx tsc)
+(cd "${REPO_DIR}/validator" && npm install --silent --no-audit --no-fund && npm run build)
 tar czf "${VALIDATOR_TGZ}" -C "${REPO_DIR}/validator" dist node_modules package.json
 echo "    Validator built and packaged (${VALIDATOR_TGZ})."
 
@@ -58,7 +67,7 @@ echo ""
 echo "==> [T+0] Deploying stacks (NetworkStack → FortiGateStack → BastionStack → WatchdogStack)..."
 (
   cd "${REPO_DIR}/infra"
-  npm ci --silent
+  npm install --silent --no-audit --no-fund
   AWS_PROFILE="${PROFILE}" AWS_REGION="${REGION}" \
     npx cdk deploy --all \
       --require-approval never \

@@ -158,23 +158,22 @@ export class NetworkStack extends cdk.Stack {
     this.sgMgmt.addIngressRule(ec2.Peer.ipv4(adminCidr), ec2.Port.tcp(443), 'HTTPS GUI');
     this.sgMgmt.addIngressRule(ec2.Peer.ipv4(adminCidr), ec2.Port.tcp(22),  'SSH CLI');
 
-    // sg-ha: Port3 — heartbeat only
+    // sg-ha: Port3 — FGCP heartbeat + session sync between cluster members.
+    // The FGCP heartbeat is NOT plain TCP/UDP 703 — it uses protocol-level packets
+    // (EtherType 0x8890/0x8891/0x8893, encapsulated for unicast HA on AWS) and
+    // session-pickup adds TCP 703. Enumerating every protocol is fragile and a
+    // narrow TCP/UDP-703-only rule silently breaks heartbeat, so the two units
+    // never form a cluster (each becomes a 1-member "primary"). The canonical
+    // FortiGate-on-AWS pattern is to allow ALL traffic BETWEEN cluster members:
+    // both Port3 ENIs share sgHa, so a self-referencing allow-all rule lets them
+    // form the cluster while staying closed to everything outside the group.
     this.sgHa = new ec2.SecurityGroup(this, 'SgHa', {
       vpc: this.vpc,
-      description: 'sg-ha: Port3 FGCP heartbeat',
-      allowAllOutbound: false,
+      description: 'sg-ha: Port3 FGCP heartbeat + session sync (intra-cluster)',
+      allowAllOutbound: true,
     });
     this.sgHa.addIngressRule(
-      ec2.Peer.ipv4(defaults.vpcCidr), ec2.Port.tcp(defaults.haPort), 'FGCP heartbeat TCP',
-    );
-    this.sgHa.addIngressRule(
-      ec2.Peer.ipv4(defaults.vpcCidr), ec2.Port.udp(defaults.haPort), 'FGCP heartbeat UDP',
-    );
-    this.sgHa.addEgressRule(
-      ec2.Peer.ipv4(defaults.vpcCidr), ec2.Port.tcp(defaults.haPort), 'FGCP heartbeat TCP out',
-    );
-    this.sgHa.addEgressRule(
-      ec2.Peer.ipv4(defaults.vpcCidr), ec2.Port.udp(defaults.haPort), 'FGCP heartbeat UDP out',
+      this.sgHa, ec2.Port.allTraffic(), 'FGCP heartbeat + session sync between cluster members',
     );
 
     // sg-ha-mgmt: Port4 — dedicated HA management (public) for EC2 API egress + admin

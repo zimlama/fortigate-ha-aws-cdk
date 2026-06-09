@@ -1,6 +1,10 @@
 # Low Level Design — FortiGate HA on AWS
 
 > Prerequisite: read [02-HLD.md](02-HLD.md) for topology and design decisions.
+> Diagram: [`docs/diagrams/03-LLD-fortigate-ha.drawio`](diagrams/03-LLD-fortigate-ha.drawio)
+> (4 CDK stacks + resources + dependencies — open in [diagrams.net](https://app.diagrams.net)).
+> Companion: [06-cdk-preflight-design-checklist.md](06-cdk-preflight-design-checklist.md)
+> (design invariants) and [05-troubleshooting-ha-runbook.md](05-troubleshooting-ha-runbook.md).
 
 ---
 
@@ -8,11 +12,13 @@
 
 ```
 NetworkStack
-    └── FortiGateStack   (imports VPC, subnets, SGs)
-            └── WatchdogStack  (imports stack names for destroy target)
+    └── FortiGateStack   (imports VPC, subnets, SGs, private route tables)
+            └── BastionStack    (imports VPC + sg-mgmt + sg-ha-mgmt; in-VPC validator vantage)
+            └── WatchdogStack   (cost guard — auto-destroy)
 ```
 
-All three stacks are synthesised and deployed in a single `cdk deploy --all`.
+All four stacks deploy in a single `cdk deploy --all` (driven by `deploy-and-test.sh`,
+which sets `DEPLOY_VIA_SCRIPT=1`; direct `cdk deploy` is blocked in `bin/app.ts`).
 
 ---
 
@@ -22,47 +28,66 @@ All three stacks are synthesised and deployed in a single `cdk deploy --all`.
 
 ```
 NetworkStack
-├── VPC (10.0.0.0/16, 2 AZs, no NAT gateway, no default SGs)
-├── Subnet public-1a   (10.0.1.0/24,  AZ us-east-1a, mapPublicIpOnLaunch: false)
-├── Subnet private-1a  (10.0.2.0/24,  AZ us-east-1a)
-├── Subnet ha-1a       (10.0.3.0/24,  AZ us-east-1a)
-├── Subnet public-1b   (10.0.11.0/24, AZ us-east-1b, mapPublicIpOnLaunch: false)
-├── Subnet private-1b  (10.0.12.0/24, AZ us-east-1b)
-├── Subnet ha-1b       (10.0.13.0/24, AZ us-east-1b)
+├── VPC (10.0.0.0/16, 2 AZs, no NAT gateway, no default SGs, IGW created manually)
+├── Subnet public-1a   (10.0.1.0/24,  AZ a, mapPublicIpOnLaunch: false)  — Port1 WAN
+├── Subnet private-1a  (10.0.2.0/24,  AZ a)                              — Port2 data
+├── Subnet ha-1a       (10.0.3.0/24,  AZ a)                              — Port3 heartbeat
+├── Subnet mgmt-1a     (10.0.4.0/24,  AZ a, public route)               — Port4 HA-MGMT
+├── Subnet public-1b   (10.0.11.0/24, AZ b)                             — Port1 WAN
+├── Subnet private-1b  (10.0.12.0/24, AZ b)                             — Port2 data
+├── Subnet ha-1b       (10.0.13.0/24, AZ b)                             — Port3 heartbeat
+├── Subnet mgmt-1b     (10.0.14.0/24, AZ b, public route)               — Port4 HA-MGMT
 ├── InternetGateway + VPCGatewayAttachment
-├── RouteTable public  (0.0.0.0/0 → IGW; associated to public-1a + public-1b)
-├── RouteTable private-1a  (0.0.0.0/0 → Port2-A ENI; updated on failover)
-├── RouteTable private-1b  (0.0.0.0/0 → Port2-A ENI initially; updated on failover)
-├── SecurityGroup sg-wan
-├── SecurityGroup sg-mgmt
-└── SecurityGroup sg-ha
+├── Routes: 0.0.0.0/0 → IGW on public-1a/1b AND mgmt-1a/1b (Port4 needs EC2-API egress)
+├── RouteTable private-1a / private-1b  (reused auto-tables; SDN connector ReplaceRoute targets)
+├── SecurityGroup sg-wan       (Port1)
+├── SecurityGroup sg-mgmt      (Port2)
+├── SecurityGroup sg-ha        (Port3)
+└── SecurityGroup sg-ha-mgmt   (Port4)
 ```
+
+> 8 subnets, 4 per AZ — this is the Fortinet cross-AZ reference layout (WAN / data /
+> heartbeat / dedicated HA-management). See [04-fortinet-ha-reference-design.md](04-fortinet-ha-reference-design.md).
 
 ### Security group rules
 
 **sg-wan** (Port1 — public WAN):
 ```
-Inbound:  TCP 443    0.0.0.0/0      HTTPS management / SSL-VPN
-          UDP 500    0.0.0.0/0      IKEv2 Phase 1
-          UDP 4500   0.0.0.0/0      IKEv2 NAT-T
-          ICMP -1    0.0.0.0/0      Health probes
-Outbound: All        0.0.0.0/0
+Inbound:  TCP 443  0.0.0.0/0   HTTPS management / SSL-VPN
+          UDP 500  0.0.0.0/0   IKEv2 Phase 1
+          UDP 4500 0.0.0.0/0   IKEv2 NAT-T
+          ICMP -1  0.0.0.0/0   Health probes
+Outbound: All      0.0.0.0/0
 ```
 
 **sg-mgmt** (Port2 — admin, RFC-001):
 ```
-Inbound:  TCP 443   { adminCidr }   HTTPS GUI (CDK context var, never hardcoded)
-          TCP 22    { adminCidr }   SSH CLI
-Outbound: All       0.0.0.0/0
+Inbound:  TCP 443  { adminCidr }   HTTPS GUI (CDK context var, never hardcoded)
+          TCP 22   { adminCidr }   SSH CLI
+Outbound: All      0.0.0.0/0
 ```
 
-**sg-ha** (Port3 — heartbeat only):
+**sg-ha** (Port3 — FGCP heartbeat + session sync, intra-cluster):
 ```
-Inbound:  TCP 703   10.0.0.0/16    FGCP heartbeat
-          UDP 703   10.0.0.0/16    FGCP heartbeat
-Outbound: TCP 703   10.0.0.0/16
-          UDP 703   10.0.0.0/16
+Inbound:  ALL traffic   source = sg-ha (self-referencing)   between cluster members
+Outbound: All           0.0.0.0/0
 ```
+> ⚠️ **Do NOT scope this to TCP/UDP 703.** 703 is session-sync; the FGCP heartbeat
+> uses protocol-level packets (EtherType 0x8890/0x8891/0x8893, encapsulated for unicast).
+> A port-scoped rule silently drops the heartbeat → the cluster never forms
+> (`number of member: 1`) → no failover. This was the project's root-cause bug
+> (lesson #8 / runbook §4.A). The self-referencing allow-all keeps it open only
+> between the two Port3 ENIs (both in sg-ha) and closed to everything else.
+
+**sg-ha-mgmt** (Port4 — dedicated HA-management):
+```
+Inbound:  TCP 443  { adminCidr }   HTTPS GUI
+          TCP 22   { adminCidr }   SSH CLI
+          ICMP -1  { adminCidr }   Reachability probes
+Outbound: All      0.0.0.0/0        (EC2 API egress for the SDN connector)
+```
+> Bastion → Port4 (22) and Port2 (22/443) ingress rules are added in **BastionStack**
+> (as standalone `CfnSecurityGroupIngress`) to keep the dependency one-way and avoid a cycle.
 
 ### CDK outputs
 
@@ -84,27 +109,50 @@ const ami = ec2.MachineImage.lookup({
   owners: ['679593333241'],   // Fortinet AWS Marketplace owner
 });
 ```
+Dynamic — resolves the latest AMI in the target region (lesson #3). Pin with a
+narrower `name` filter (e.g. `…AWSONDEMAND-7.6.*`) if a fixed FortiOS version is required.
 
-Lookup is dynamic — always resolves to the latest available AMI in the target region.
-Pin to a specific version by adding `filters: { 'name': ['FortiGate-VM64-AWSONDEMAND-7.6.*'] }`.
-
-### ENI layout (6 total, 3 per instance)
+### ENI layout (8 total, 4 per instance)
 
 ```
-FGT-Active (us-east-1a)          FGT-Passive (us-east-1b)
-  eni-p1a  subnet: public-1a       eni-p1b  subnet: public-1b
-  eni-p2a  subnet: private-1a      eni-p2b  subnet: private-1b
-  eni-p3a  subnet: ha-1a           eni-p3b  subnet: ha-1b
+FGT-Active (us-east-1a)            FGT-Passive (us-east-1b)
+  eni-p1a  public-1a   Port1 WAN     eni-p1b  public-1b   Port1 WAN
+  eni-p2a  private-1a  Port2 data    eni-p2b  private-1b  Port2 data
+  eni-p3a  ha-1a       Port3 HB      eni-p3b  ha-1b       Port3 HB
+  eni-p4a  mgmt-1a     Port4 MGMT    eni-p4b  mgmt-1b     Port4 MGMT
 ```
 
-All ENIs: `sourceDestCheck: false` (required for FortiGate to route traffic).
-SG assignments: Port1 → sg-wan, Port2 → sg-mgmt, Port3 → sg-ha.
+- All ENIs: `sourceDestCheck: false` (FortiGate routes third-party IPs — lesson #2).
+- SG assignment: Port1 → sg-wan, Port2 → sg-mgmt, Port3 → sg-ha, Port4 → sg-ha-mgmt.
+- **All 4 ENIs attached AT LAUNCH** via the instance's `networkInterfaces` array, not
+  post-boot. Sequential `CfnNetworkInterfaceAttachment` would let UserData run before
+  Ports 2/3/4 exist, silently breaking HA + the SDN connector (lesson #3 area / checklist B3):
 
-### EIP
+```typescript
+const cfn = fgtActive.node.defaultChild as ec2.CfnInstance;
+cfn.networkInterfaces = [
+  { deviceIndex: '0', networkInterfaceId: eniP1a.ref },
+  { deviceIndex: '1', networkInterfaceId: eniP2a.ref },
+  { deviceIndex: '2', networkInterfaceId: eniP3a.ref },
+  { deviceIndex: '3', networkInterfaceId: eniP4a.ref },
+];
+cfn.addPropertyDeletionOverride('SubnetId');
+cfn.addPropertyDeletionOverride('SecurityGroupIds');
+```
 
-One EIP attached to `eni-p1a` at deploy time. On failover FortiGate calls:
-1. `ec2:DisassociateAddress` — detach from eni-p1a
-2. `ec2:AssociateAddress` — attach to eni-p1b
+### EIPs (1 cluster + 2 per-unit mgmt)
+
+```
+EipActive   → eni-p1a (Port1)   tag FortigateHACluster=fortigate-ha   ← the cluster VIP, fails over
+EipMgmtA    → eni-p4a (Port4)   tag FortigateHARole=active-mgmt        ← per-unit, does NOT fail over
+EipMgmtB    → eni-p4b (Port4)   tag FortigateHARole=passive-mgmt       ← per-unit, does NOT fail over
+```
+
+> The validator finds the active node by **who holds the `FortigateHACluster`-tagged
+> EIP**. Only the cluster VIP carries that tag; the mgmt EIPs must NOT, or active
+> detection breaks (checklist G1/G2). On failover the FGCP callback runs
+> `ec2:DisassociateAddress` (release from the terminated unit's eni-p1a) then
+> `ec2:AssociateAddress` (attach to eni-p1b).
 
 ### IAM instance profile
 
@@ -116,12 +164,11 @@ const role = new iam.Role(this, 'FgtRole', {
       statements: [new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: [
+          'ec2:Describe*',              // all discovery calls the SDN connector needs
           'ec2:AssociateAddress',
-          'ec2:DisassociateAddress',
-          'ec2:DescribeAddresses',
-          'ec2:DescribeInstances',
-          'ec2:DescribeInstanceStatus',
-          'ec2:DescribeNetworkInterfaces',
+          'ec2:DisassociateAddress',    // required: release EIP from terminated unit's ENI first
+          'ec2:AssignPrivateIpAddresses',
+          'ec2:UnassignPrivateIpAddresses',
           'ec2:ReplaceRoute',
         ],
         resources: ['*'],  // EC2 describe/associate don't support resource-level restriction
@@ -130,22 +177,38 @@ const role = new iam.Role(this, 'FgtRole', {
   },
 });
 ```
+> IAM only matters AFTER the cluster forms and failover fires. If the cluster is
+> 1-member, fix sg-ha first — IAM is a red herring until then (lesson #9).
 
 ### UserData (bootstrap config)
 
-Injected via `ec2.UserData.custom(...)`. Configures:
+Injected via `ec2.UserData.custom(...)`. Per unit (priorities/gateway/peer differ):
 
-1. **Port2 admin access** (RFC-001 — the thesis):
+1. **Admin password** — set explicitly, else default = instance-id and first login
+   forces a change, blocking automation (lesson #10):
+```
+config system admin
+  edit "admin"
+    set password "{{ ha_password }}"
+  next
+end
+```
+
+2. **Interface access** — Port2 (data/admin) and Port4 (HA-MGMT):
 ```
 config system interface
   edit "port2"
     set allowaccess https ssh
     set alias "MGMT-Port2"
   next
+  edit "port4"
+    set allowaccess https ssh ping
+    set alias "HA-MGMT"
+  next
 end
 ```
 
-2. **HA unicast** (mandatory in AWS — no L2/multicast):
+3. **HA — unicast A-P with dedicated mgmt interface** (no L2/multicast in AWS):
 ```
 config system ha
   set mode a-p
@@ -153,136 +216,108 @@ config system ha
   set password "{{ ha_password }}"
   set hbdev "port3" 50
   set session-pickup enable
+  set ha-mgmt-status enable
+  config ha-mgmt-interfaces
+    edit 1
+      set interface "port4"
+      set gateway {{ mgmt_gw }}        # .1 of the unit's mgmt subnet
+    next
+  end
   set override enable
-  set priority {{ priority }}           # 200 for Active, 100 for Passive
+  set priority {{ priority }}          # 200 Active, 100 Passive
   set unicast-hb enable
   set unicast-hb-peerip {{ peer_p3_ip }}
 end
 ```
 
-3. **Route table IDs** passed as CDK context vars so the FortiGate callback knows which
-   route tables to update on failover:
+4. **SDN connector** — both AZ route tables so failover updates both (lesson #7):
 ```
 config system sdn-connector
   edit "aws"
     set type aws
+    set use-metadata-iam enable
+    set ha-status enable
     set route-table {{ rtPrivate1aId }},{{ rtPrivate1bId }}
   next
 end
 ```
 
-### Instance construct
+### CDK outputs
 
 ```typescript
-const fgt = new ec2.Instance(this, 'FgtActive', {
-  instanceType: new ec2.InstanceType('c6in.xlarge'),
-  machineImage: ami,
-  vpc,
-  vpcSubnets: { subnets: [publicSubnet1a] },   // primary ENI = Port1
-  securityGroup: sgWan,
-  role,
-  userData,
-  blockDevices: [{
-    deviceName: '/dev/sda1',
-    volume: ec2.BlockDeviceVolume.ebs(30, { volumeType: ec2.EbsDeviceVolumeType.GP3 }),
-  }],
-});
-// Attach Port2 and Port3 as additional ENIs
-new ec2.CfnNetworkInterfaceAttachment(this, 'P2aAttach', {
-  instanceId: fgt.instanceId, networkInterfaceId: eniP2a.ref, deviceIndex: '1',
-});
-new ec2.CfnNetworkInterfaceAttachment(this, 'P3aAttach', {
-  instanceId: fgt.instanceId, networkInterfaceId: eniP3a.ref, deviceIndex: '2',
-});
+FgtActivePort2Ip / FgtPassivePort2Ip   // data interface (bastion SSH fallback)
+FgtActivePort4Ip / FgtPassivePort4Ip   // HA-MGMT — reliable SSH path for diagnostics
 ```
 
 ---
 
-## Stack 3 — WatchdogStack
+## Stack 3 — BastionStack
 
-### EventBridge rule
+In-VPC, SSM-managed vantage point (no SSH key, no inbound SG). Purposes:
+
+1. Run the failover **validator** (must reach the active node's Port2 PRIVATE IP).
+2. Run **SSH diagnostics** against the FortiGates (Port4 / Port2) — `ha-test.sh`.
+
+```
+BastionStack
+├── S3 ValidatorBucket          (validator.tgz staged here, autoDelete)
+├── SecurityGroup sg-bastion    (no ingress; allowAllOutbound)
+├── Ingress BastionToPort2      (sg-mgmt    : 443 from sg-bastion)
+├── Ingress BastionToPort2Ssh   (sg-mgmt    : 22  from sg-bastion)
+├── Ingress BastionToPort4Ssh   (sg-ha-mgmt : 22  from sg-bastion)   ← reliable diag path
+├── IAM role (AmazonSSMManagedInstanceCore + ec2:DescribeInstances/Addresses + S3 read)
+├── Instance (t3.micro, Amazon Linux 2023; UserData: dnf install nodejs tar)
+└── BastionEip                  (egress for EC2 API / S3 / SSM)
+Outputs: BastionInstanceId, ValidatorBucketName
+```
+
+---
+
+## Stack 4 — WatchdogStack
+
+Cost guard — auto-destroys all stacks at the lab timeout, independent of the local
+`deploy-and-test.sh` cleanup trap (defence in depth against runaway cost).
 
 ```typescript
 const rule = new events.Rule(this, 'AutoDestroyRule', {
-  schedule: events.Schedule.rate(cdk.Duration.minutes(30)),
+  schedule: events.Schedule.rate(cdk.Duration.minutes(30)),   // defaults.labTimeoutMinutes
 });
+// → Lambda (Python) → CodeBuild project running `cdk destroy --all --force --ci`
 ```
-
-### Lambda (trigger)
-
-Invokes a CodeBuild project. Uses Lambda over direct CodeBuild invocation to allow
-environment variable injection (stack names, region) at runtime.
-
-```typescript
-const fn = new lambda.Function(this, 'WatchdogFn', {
-  runtime: lambda.Runtime.PYTHON_3_12,
-  handler: 'index.handler',
-  code: lambda.Code.fromInline(`
-import boto3, os
-def handler(event, context):
-    cb = boto3.client('codebuild')
-    cb.start_build(projectName=os.environ['CODEBUILD_PROJECT'])
-`),
-  environment: { CODEBUILD_PROJECT: destroyProject.projectName },
-  timeout: cdk.Duration.seconds(30),
-});
-rule.addTarget(new targets.LambdaFunction(fn));
-```
-
-### CodeBuild project (destroy)
-
-```typescript
-const destroyProject = new codebuild.Project(this, 'DestroyProject', {
-  buildSpec: codebuild.BuildSpec.fromObject({
-    version: '0.2',
-    phases: {
-      install: { commands: ['npm ci'] },
-      build:   { commands: ['npx cdk destroy --all --force --ci'] },
-    },
-  }),
-  environment: { buildImage: codebuild.LinuxBuildImage.STANDARD_7_0 },
-});
-```
-
 CodeBuild role needs `cloudformation:*`, `ec2:*`, `iam:*` scoped to the FortiGate stacks.
 
 ---
 
 ## CDK fine-grained assertion tests (`infra/test/`)
 
-Key assertions (verified without deploying):
+Key assertions (verified without deploying) — keep these in sync with the design above:
 
 ```typescript
-// 6 ENIs with sourceDestCheck: false
-template.resourceCountIs('AWS::EC2::NetworkInterface', 6);
-template.allResourcesProperties('AWS::EC2::NetworkInterface', {
-  SourceDestCheck: false,
-});
+// 8 ENIs, all with sourceDestCheck: false
+template.resourceCountIs('AWS::EC2::NetworkInterface', 8);
+template.allResourcesProperties('AWS::EC2::NetworkInterface', { SourceDestCheck: false });
 
-// IAM role has exactly 7 actions
+// FgtRole failover actions
 template.hasResourceProperties('AWS::IAM::Policy', {
   PolicyDocument: Match.objectLike({
-    Statement: [{ Action: Match.arrayWith([
-      'ec2:AssociateAddress', 'ec2:DisassociateAddress',
-      'ec2:DescribeAddresses', 'ec2:DescribeInstances',
-      'ec2:DescribeInstanceStatus', 'ec2:DescribeNetworkInterfaces',
+    Statement: Match.arrayWith([ Match.objectLike({ Action: Match.arrayWith([
+      'ec2:Describe*', 'ec2:AssociateAddress', 'ec2:DisassociateAddress',
       'ec2:ReplaceRoute',
-    ])}],
+    ])})]),
   }),
 });
 
-// HA SG allows port 703 within VPC only
-template.hasResourceProperties('AWS::EC2::SecurityGroup', {
-  SecurityGroupIngress: Match.arrayWith([
-    Match.objectLike({ IpProtocol: 'tcp', FromPort: 703, ToPort: 703, CidrIp: '10.0.0.0/16' }),
-  ]),
+// sg-ha is self-referencing allow-all (NOT port 703)
+template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+  IpProtocol: '-1',  // all protocols, source = sg-ha itself
 });
 
-// EventBridge rule fires every 30 min
-template.hasResourceProperties('AWS::Events::Rule', {
-  ScheduleExpression: 'rate(30 minutes)',
-});
+// EventBridge watchdog fires every 30 min
+template.hasResourceProperties('AWS::Events::Rule', { ScheduleExpression: 'rate(30 minutes)' });
 ```
+
+> If you change the design, update these assertions AND the
+> [pre-flight checklist](06-cdk-preflight-design-checklist.md).
 
 ---
 
@@ -292,19 +327,20 @@ template.hasResourceProperties('AWS::Events::Rule', {
 export const defaults = {
   vpcCidr:        '10.0.0.0/16',
   subnets: {
-    publicA:      '10.0.1.0/24',
-    privateA:     '10.0.2.0/24',
-    haA:          '10.0.3.0/24',
-    publicB:      '10.0.11.0/24',
-    privateB:     '10.0.12.0/24',
-    haB:          '10.0.13.0/24',
+    publicA: '10.0.1.0/24',  privateA: '10.0.2.0/24',
+    haA:     '10.0.3.0/24',  mgmtA:    '10.0.4.0/24',
+    publicB: '10.0.11.0/24', privateB: '10.0.12.0/24',
+    haB:     '10.0.13.0/24', mgmtB:    '10.0.14.0/24',
   },
-  instanceType:   'c6in.xlarge',
-  ebsGb:          30,
-  haPriorities:   { active: 200, passive: 100 },
-  haPort:         703,
-  failoverTimeout: 120,  // seconds (NFR)
-  labTimeout:     30,    // minutes (watchdog)
+  instanceType:        'c6in.xlarge',
+  bastionInstanceType: 't3.micro',
+  clusterTag:          'fortigate-ha',
+  ebsGb:               30,
+  haPriorities:        { active: 200, passive: 100 },
+  haPort:              703,   // session-sync reference only — NOT used to scope sg-ha
+  failoverTimeout:     120,   // seconds (NFR)
+  labTimeoutMinutes:   30,    // watchdog
+  lambdaTimeoutSeconds: 30,
 } as const;
 ```
 
@@ -312,14 +348,15 @@ All timing and sizing values come from here — zero magic numbers in stack code
 
 ---
 
-## Deploy pre-requisites
+## Deploy & test pre-requisites
 
 1. **Accept FortiGate PAYG terms** in AWS Console → Marketplace → FortiGate-VM64-AWSONDEMAND.
-   Without this, `cdk deploy` fails at EC2 launch.
-2. **Set CDK context vars** (never hardcode):
+   Without this, instances launch then terminate with no CFN error (lesson #6).
+2. **Run via the script** (never raw `cdk deploy`):
    ```bash
-   npx cdk deploy --all \
-     -c adminCidr=YOUR.IP.HERE/32 \
-     -c haPassword=changeme123
+   HA_PASSWORD='<pw>' AWS_PROFILE=default ./scripts/deploy-and-test.sh
    ```
-3. AWS profile: `test-admin` (us-east-1).
+   It builds/stages the validator, deploys all stacks, waits `HA_BOOT_WAIT` for HA to
+   form, runs `ha-test.sh` (pre-flight gate → failover → diagnostics), then auto-destroys.
+   Full run log is tee'd to `/tmp/fgt-ha-run-<ts>.log`.
+3. `adminCidr` / `haPassword` are passed as CDK context — never hardcoded.

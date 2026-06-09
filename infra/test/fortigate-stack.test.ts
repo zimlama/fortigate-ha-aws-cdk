@@ -54,16 +54,15 @@ describe('FortiGateStack', () => {
           PolicyDocument: Match.objectLike({
             Statement: Match.arrayWith([
               Match.objectLike({
+                // arrayWith matches as an ordered subsequence — keep this in the
+                // same order the stack declares the actions.
                 Action: Match.arrayWith([
+                  'ec2:Describe*',
                   'ec2:AssociateAddress',
                   'ec2:DisassociateAddress',
-                  'ec2:DescribeAddresses',
-                  'ec2:DescribeInstances',
-                  'ec2:DescribeInstanceStatus',
-                  'ec2:DescribeNetworkInterfaces',
-                  'ec2:ReplaceRoute',
                   'ec2:AssignPrivateIpAddresses',
                   'ec2:UnassignPrivateIpAddresses',
+                  'ec2:ReplaceRoute',
                 ]),
               }),
             ]),

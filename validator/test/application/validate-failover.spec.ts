@@ -82,28 +82,30 @@ describe("ValidateFailoverUseCase", () => {
     });
   });
 
-  describe("S3.3 — Mgmt unreachable (the thesis case)", () => {
-    it("returns FAILED with mgmt reason when Port2 is not reachable", async () => {
+  describe("S3.3 — Port2 unreachable is informational, not a gate", () => {
+    it("PASSES when the EIP migrated even if Port2 is unreachable", async () => {
+      // Port2 is a data-plane interface (unreliable on a standby unit). Its HTTPS
+      // reachability is captured for diagnostics but does NOT gate the result —
+      // EIP migration is the authoritative proof of failover. See lessons #9/#10.
       const cloud = new FakeCloudQuery([stateB_active_with_eip]);
-      const net = new FakeReachability(new Set()); // B's IP not in set
+      const net = new FakeReachability(new Set()); // B's Port2 not reachable
       const useCase = new ValidateFailoverUseCase(cloud, net);
 
       const outcome = await useCase.execute({
         terminatedNodeId: "i-A",
-        ...FAST_POLL,
-      } as ValidateFailoverInput);
+        pollIntervalMs: 10,
+        pollTimeoutMs: 50,
+      });
 
-      expect(outcome.isPassed()).toBe(false);
-      expect(outcome.reasons).toContain(
-        "mgmt unreachable on Port2 after failover"
-      );
+      expect(outcome.isPassed()).toBe(true);
+      expect(outcome.reasons).toHaveLength(0);
     });
   });
 
-  describe("S3.4 — Both conditions fail", () => {
-    it("returns FAILED with both EIP and mgmt reasons", async () => {
+  describe("S3.4 — EIP gate fails (Port2 not a gate)", () => {
+    it("returns FAILED with only the EIP reason when no node holds the EIP", async () => {
       const cloud = new FakeCloudQuery([stateB_active_no_eip]);
-      const net = new FakeReachability(new Set()); // B's IP not reachable either
+      const net = new FakeReachability(new Set()); // B's Port2 not reachable either
       const useCase = new ValidateFailoverUseCase(cloud, net);
 
       const outcome = await useCase.execute({
@@ -113,7 +115,7 @@ describe("ValidateFailoverUseCase", () => {
 
       expect(outcome.isPassed()).toBe(false);
       expect(outcome.reasons).toContain("no EIP holder found");
-      expect(outcome.reasons).toContain(
+      expect(outcome.reasons).not.toContain(
         "mgmt unreachable on Port2 after failover"
       );
     });

@@ -126,13 +126,23 @@ No manual failover scripts. HA state detection on port3 triggers `awsd` to reass
 
 ---
 
-## 5. Tension with the repo's original thesis
+## 5. Resolution — aligned with the Fortinet 8.0 reference (implemented & proven)
 
-The project's stated thesis (see `wiki/MEMORY.md`) was: *"FortiGate's MGMT interface does NOT failover; management must live on Port2 (INTERNAL), which IS covered by the failover callback."*
+The project's *original* thesis was: *"FortiGate's MGMT interface does NOT failover;
+management must live on Port2 (INTERNAL), which IS covered by the failover callback."*
 
-The Fortinet 8.0 reference takes a **different** stance: management lives on a **dedicated port4 that does NOT failover** — each unit keeps its own HA-mgmt EIP precisely so it can always reach the EC2 API, even as passive. Our 3-port design collapsed management onto port2 and gave only the active an EIP, which is exactly what left the passive unable to fail over.
+The Fortinet 8.0 reference takes a **different** stance: management lives on a **dedicated
+port4 that does NOT failover** — each unit keeps its own HA-mgmt EIP precisely so it can
+always reach the EC2 API, even as passive. The original 3-port design collapsed management
+onto port2 and gave only the active an EIP.
 
-**Decision pending**: align fully with the 8.0 reference (4-port, per-unit HA-mgmt EIP), or keep the port2-management thesis and solve passive egress another way (VPC endpoint / NAT). The reference path is recommended.
+**Decision (2026-06-09): aligned fully with the 8.0 reference — implemented and proven.**
+The CDK now ships the 4-port layout (per-unit HA-mgmt EIP on port4, `ha-mgmt-status enable`,
+`ha-mgmt-interfaces` bound to port4). Combined with the heartbeat-SG fix (lesson #8),
+FGCP failover and EIP migration are validated end-to-end. The original Port2-management
+thesis was disproven and retired — Port2 is data-plane and unreliable on standby; Port4 is
+the management path. See [`lessons-learned.md`](lessons-learned.md) #8/#9/#10 and
+[`01-RFC.md`](01-RFC.md) RFC-001 (revised) / RFC-007.
 
 ---
 

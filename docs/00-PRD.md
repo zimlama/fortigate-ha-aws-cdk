@@ -8,16 +8,26 @@
 
 ## Problem Statement
 
-Deploying FortiGate Active/Passive HA on AWS requires understanding a non-obvious platform behavior: the MGMT interface is not covered by the FGCP failover callback. Engineers who configure admin access on MGMT lose management connectivity every time a failover occurs, without any error or warning from FortiOS. This creates a hidden operational risk in production environments.
+There is no automated, reproducible way to verify that a FortiGate Active/Passive HA
+deployment on AWS actually survives failover. Across two AZs there is no L2, so failover
+is entirely API-driven (EIP reassociation + route-table updates via the FGCP/SDN
+connector) — and several non-obvious platform behaviors silently break it: the HA
+heartbeat is not plain TCP/UDP (a port-scoped security group drops it and the cluster
+never forms), and the MGMT service does not follow the active unit. Manual testing of
+all this is slow, expensive, and not repeatable in CI.
 
-There is no automated, reproducible way to verify that a FortiGate HA deployment correctly survives failover with management access intact. Manual testing is slow, expensive, and not repeatable in CI.
+This project proves FGCP failover end-to-end (deploy → inject fault → validate EIP
+migration → destroy) and ships a layered diagnostics harness so a failed run reveals
+*why*. A key finding baked in: management must live on **Port4 (HA-MGMT)** — a dedicated
+interface up on both units — because Port2 (data-plane) does not reliably answer
+management on a standby unit.
 
 ---
 
 ## Goals
 
-1. Provide a fully automated, IaC-driven FortiGate HA deployment on AWS that implements the correct management configuration (Port2, not MGMT).
-2. Provide an automated validator that proves the fix works — triggering a real failover and asserting management reachability on the new Active node.
+1. Provide a fully automated, IaC-driven FortiGate cross-AZ HA deployment on AWS with the correct heartbeat (self-referencing sg-ha) and management (Port4 HA-MGMT) configuration.
+2. Provide an automated validator that proves failover works — triggering a real fault and asserting the cluster EIP migrated to the surviving node.
 3. Keep total lab cost under $2 per run via a 30-minute auto-destroy mechanism.
 4. Serve as a credible, reviewable portfolio artifact demonstrating production-grade engineering practices.
 
@@ -47,11 +57,16 @@ There is no automated, reproducible way to verify that a FortiGate HA deployment
 **so that** I can verify the management configuration without manual intervention.
 
 **Acceptance criteria:**
+- Pre-flight: the cluster is confirmed as a healthy 2-member cluster before any fault is
+  injected (else the test aborts without terminating anything).
 - Given a healthy cluster, when the Active instance is terminated, then:
-  - The EIP migrates to the new Active node.
-  - Port2 management on the new Active node is reachable via HTTPS within 120 seconds.
+  - The cluster EIP migrates to the new Active node within 120 seconds (the pass/fail gate).
   - The validator exits with code `0` and prints `FAILOVER PASSED ✅`.
-- If either condition is not met within 120 seconds, the validator exits with code `1` and prints `FAILED ❌` with a specific reason.
+- Port2 HTTPS reachability is captured as informational telemetry (Port2 is data-plane;
+  Port4 HA-MGMT is the management path) — not a pass/fail gate.
+- If the EIP does not migrate within 120 seconds, the validator exits non-zero and prints
+  `FAILED ❌` with a specific reason; layered diagnostics (console, SSH on Port4, CloudTrail)
+  are captured regardless.
 
 ### US-003 — Automatic resource cleanup
 **As an** AWS account owner,  

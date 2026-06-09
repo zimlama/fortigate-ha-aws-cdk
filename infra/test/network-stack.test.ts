@@ -47,17 +47,26 @@ describe('NetworkStack', () => {
     });
   });
 
-  test('sg-ha allows port 703 TCP within VPC only', () => {
-    template.hasResourceProperties('AWS::EC2::SecurityGroup', {
-      SecurityGroupIngress: Match.arrayWith([
-        Match.objectLike({
-          IpProtocol: 'tcp',
-          FromPort: 703,
-          ToPort: 703,
-          CidrIp: '10.0.0.0/16',
-        }),
-      ]),
+  test('sg-ha allows ALL traffic between cluster members (self-referencing, not port 703)', () => {
+    // FGCP heartbeat is not TCP/UDP 703; it is protocol-level. sg-ha must allow all
+    // traffic between members via a self-referencing rule, which CDK renders as a
+    // standalone AWS::EC2::SecurityGroupIngress with IpProtocol '-1' (all protocols)
+    // whose source security group is sg-ha itself.
+    template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+      IpProtocol: '-1',
+      GroupId: Match.anyValue(),
+      SourceSecurityGroupId: Match.anyValue(),
     });
+  });
+
+  test('no security group rule references the legacy FGCP port 703', () => {
+    const sgs = template.findResources('AWS::EC2::SecurityGroup');
+    const has703 = Object.values(sgs).some((sg: any) =>
+      (sg.Properties?.SecurityGroupIngress ?? []).some(
+        (r: any) => r.FromPort === 703 || r.ToPort === 703,
+      ),
+    );
+    expect(has703).toBe(false);
   });
 
   test('sg-mgmt uses adminCidr context value (not hardcoded)', () => {

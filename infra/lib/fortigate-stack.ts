@@ -41,16 +41,20 @@ export class FortiGateStack extends cdk.Stack {
           statements: [
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
+              // ec2:Describe* covers all discovery calls the SDN connector needs.
+              // ec2:DisassociateAddress is REQUIRED: on failover the cluster EIP is
+              // still associated to the terminated active's Port1 ENI (a standalone
+              // ENI that survives instance termination), so awsd must disassociate it
+              // from the old ENI before reassociating to the surviving unit. The
+              // Italcol production policy omits it, but THIS FortiOS/SDN-connector
+              // version needs it — proven by EIP migration working only when present.
               actions: [
+                'ec2:Describe*',
                 'ec2:AssociateAddress',
                 'ec2:DisassociateAddress',
-                'ec2:DescribeAddresses',
-                'ec2:DescribeInstances',
-                'ec2:DescribeInstanceStatus',
-                'ec2:DescribeNetworkInterfaces',
-                'ec2:ReplaceRoute',
                 'ec2:AssignPrivateIpAddresses',
                 'ec2:UnassignPrivateIpAddresses',
+                'ec2:ReplaceRoute',
               ],
               resources: ['*'],
             }),
@@ -122,6 +126,11 @@ export class FortiGateStack extends cdk.Stack {
     const rtPrivate1bId = rtPrivate1b.routeTableId;
 
     const userDataActive = ec2.UserData.custom(`
+config system admin
+  edit "admin"
+    set password "${haPassword}"
+  next
+end
 config system interface
   edit "port2"
     set allowaccess https ssh
@@ -161,6 +170,11 @@ end
 `);
 
     const userDataPassive = ec2.UserData.custom(`
+config system admin
+  edit "admin"
+    set password "${haPassword}"
+  next
+end
 config system interface
   edit "port2"
     set allowaccess https ssh
@@ -310,6 +324,17 @@ end
     new cdk.CfnOutput(this, 'FgtPassivePort2Ip', {
       value: eniP2b.attrPrimaryPrivateIpAddress,
       description: 'Passive FortiGate Port2 private IP (SSH from bastion: ssh admin@<ip>)',
+    });
+
+    // Port4 = HA-MGMT: always-up dedicated management interface on both units,
+    // independent of FGCP state. The reliable path for in-VPC HA/SDN diagnostics.
+    new cdk.CfnOutput(this, 'FgtActivePort4Ip', {
+      value: eniP4a.attrPrimaryPrivateIpAddress,
+      description: 'Active FortiGate Port4 HA-MGMT private IP (SSH from bastion: ssh admin@<ip>)',
+    });
+    new cdk.CfnOutput(this, 'FgtPassivePort4Ip', {
+      value: eniP4b.attrPrimaryPrivateIpAddress,
+      description: 'Passive FortiGate Port4 HA-MGMT private IP (SSH from bastion: ssh admin@<ip>)',
     });
   }
 }

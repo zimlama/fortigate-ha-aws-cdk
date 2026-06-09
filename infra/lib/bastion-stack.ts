@@ -28,7 +28,7 @@ export class BastionStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: BastionStackProps) {
     super(scope, id, props);
 
-    const { vpc, publicSubnet1a, sgMgmt } = props.networkStack;
+    const { vpc, publicSubnet1a, sgMgmt, sgHaMgmt } = props.networkStack;
 
     // ─── Validator artifact bucket ────────────────────────────────────────────
     this.validatorBucket = new s3.Bucket(this, 'ValidatorBucket', {
@@ -65,6 +65,18 @@ export class BastionStack extends cdk.Stack {
       toPort: 22,
       sourceSecurityGroupId: sgBastion.securityGroupId,
       description: 'Bastion to Port2 SSH debug',
+    });
+
+    // Port4 (HA-MGMT) SSH: the always-up management path. Lets the bastion run
+    // FortiOS HA/SDN diagnostics on the surviving unit regardless of FGCP state,
+    // even when the data-plane Port2 is down on a not-yet-promoted unit.
+    new ec2.CfnSecurityGroupIngress(this, 'BastionToPort4Ssh', {
+      groupId: sgHaMgmt.securityGroupId,
+      ipProtocol: 'tcp',
+      fromPort: 22,
+      toPort: 22,
+      sourceSecurityGroupId: sgBastion.securityGroupId,
+      description: 'Bastion to Port4 HA-MGMT SSH diagnostics',
     });
 
     // ─── IAM role ─────────────────────────────────────────────────────────────
