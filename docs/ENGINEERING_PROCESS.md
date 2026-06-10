@@ -12,35 +12,62 @@ journey from `v1.0.0` to `v1.1.0` and beyond, not just the diff.
 
 ## 1. Branching model
 
-The repo uses a **lightweight git-flow** with one extra convention: `legacy/`
-branches preserve historical snapshots instead of deleting them.
+The repo uses a **git-flow-style** model with two long-lived branches and three
+families of short-lived ones.
+
+```
+master              — Producción (stable, tagged versions)
+  ├── fix/*         — Hotfixes (rápidos, críticos)         → PR a master
+  ├── feature/*     — Features (trabajo en progreso)       → PR a developer
+  └── developer     — Integración (pre-producción)
+      ├── refactor/* — Refactorings
+      └── docs/*     — Documentación
+```
 
 | Branch | Purpose | Lifetime | Updated by |
 |---|---|---|---|
-| `master` | **Default branch.** The validated, deployable baseline. | Permanent | PR merges from `feature/*` |
-| `feature/<name>` | A unit of work. Named after the change (`feature/heartbeat-fix`, `feature/...`). | Deleted after merge | Direct commits, force-push OK |
+| `master` | **Default branch.** The validated, deployable baseline. Tagged with `vX.Y.Z`. | Permanent | PR merges from `developer` and `fix/*` |
+| `developer` | **Integration branch.** Pre-production. All feature/refactor/docs work lands here first. | Permanent | PR merges from `feature/*`, `refactor/*`, `docs/*` |
+| `feature/<name>` | A unit of new functionality. | Deleted after merge to `developer` | Direct commits, force-push OK |
+| `refactor/<name>` | A code change with no functional change. | Deleted after merge to `developer` | Direct commits, force-push OK |
+| `docs/<name>` | Documentation-only change. | Deleted after merge to `developer` | Direct commits, force-push OK |
+| `fix/<name>` | Hotfix that can't wait for the normal flow. PR goes **directly to `master`**. | Deleted after merge | Direct commits, force-push OK |
 | `legacy/<version>` | An immutable snapshot of a past release. | Permanent, never updated | `git branch legacy/v1-initial <sha>` |
-| `release/<version>` (optional) | Tag anchor for a release. | Permanent, never updated | `git tag -a v1.0.0 <branch> -m "..."` |
 
-### Why this shape
+### Why two long-lived branches
 
 - **`master` is always deployable.** A reviewer can clone `master`, run
   `npm ci && npm test`, and have a working, validated lab. No "trust me, it
   works on my machine" — the deploy run-log proves it.
+- **`developer` is the integration buffer.** Features land here, get tested
+  together, and only when the integration is green do they get promoted to
+  `master`. This matches the `git-flow` model and gives a stable branch to
+  base a hotfix off of.
 - **`legacy/` preserves evolution.** Instead of rewriting history (which would
   break anyone who cloned previously), we keep `legacy/v1-initial` as a frozen
   snapshot. The diff between `legacy/v1-initial` and `master` is the v1 → v1.1
   story.
-- **`feature/` is disposable.** Once a feature is merged to `master` and the
-  release is tagged, the feature branch can be deleted. We keep one
-  (`feature/heartbeat-fix`) for now to document the journey in PR #2.
 
 ### What we don't do
 
-- ❌ No `develop` branch. Releases go to `master` directly via PR.
-- ❌ No squash-merges. Linear history is intentional — each commit tells a story.
-- ❌ No force-pushes to `master`. Only to `feature/*` and during the initial
-  legacy snapshot creation.
+- ❌ No squash-merges to `master` or `developer`. Linear history is intentional
+  — each commit tells a story. Squash-merge is allowed for `feature/*` →
+  `developer` only when the feature is a single self-contained unit.
+- ❌ No force-pushes to `master` or `developer`. Only to `feature/*`, `refactor/*`,
+  `docs/*`, and `fix/*`.
+
+### CI triggers
+
+The GitHub Actions workflow at `.github/workflows/ci.yml` runs on every push
+and pull_request targeting `master` or `developer`. It runs:
+
+- `npm ci`
+- `npx tsc --noEmit` (typecheck)
+- `npm run test:coverage` (validator, with the ≥90% branch coverage gate)
+- `npm test` (CDK assertion tests)
+
+See [`docs/OPERATIONS.md` §2](./OPERATIONS.md#2-clone-install-verify-no-aws-needed)
+for the equivalent local command sequence.
 
 ---
 

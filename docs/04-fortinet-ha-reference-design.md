@@ -8,7 +8,7 @@
 
 ## 1. Why this document exists
 
-The first end-to-end deploy on AWS (account `064625181580`, us-east-1) succeeded structurally — all three stacks reached `CREATE_COMPLETE` and auto-destroy cleaned up with zero orphaned resources. But the failover validator **FAILED** after terminating the active node:
+The first end-to-end deploy on AWS (a sandbox account, us-east-1) succeeded structurally — all three stacks reached `CREATE_COMPLETE` and auto-destroy cleaned up with zero orphaned resources. But the failover validator **FAILED** after terminating the active node:
 
 ```
 FAILED ❌  Failover validation failed.
