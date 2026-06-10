@@ -6,8 +6,7 @@ active node, and automatically proves the Elastic IP migrated to the survivor â€
 then tears everything down. Backed by a layered diagnostics harness so a failed
 run tells you *why*, not just *that* it failed.
 
-[![Validator](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml/badge.svg?job=validator)](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml)
-[![Infra](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml/badge.svg?job=infra)](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml)
+[![CI](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml/badge.svg)](https://github.com/zimlama/fortigate-ha-aws-cdk/actions/workflows/ci.yml)
 ![Coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)
 ![CDK](https://img.shields.io/badge/CDK-v2%20TypeScript-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
