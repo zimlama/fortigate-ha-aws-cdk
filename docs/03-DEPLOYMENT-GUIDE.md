@@ -48,12 +48,12 @@ Expected output: `aws-cli/2.x.x`
 aws sts get-caller-identity
 ```
 
-Expected output:
+Expected output (placeholder values — yours will differ):
 ```json
 {
-    "UserId": "AIDAQ6C7WAOGELCU7GBSR",
-    "Account": "064625181580",
-    "Arn": "arn:aws:iam::064625181580:user/leonardo.admin.aws"
+    "UserId": "AIDAEXAMPLE",
+    "Account": "123456789012",
+    "Arn": "arn:aws:iam::123456789012:user/your-iam-user"
 }
 ```
 
@@ -182,7 +182,7 @@ npx cdk synth \
 
 **Expected output:**
 ```
-Searching for AMI in 064625181580:us-east-1
+Searching for AMI in <account-id>:us-east-1
 Successfully synthesized to /path/to/cdk.out
 Supply a stack id (NetworkStack, FortiGateStack, WatchdogStack) to display its template.
 ```

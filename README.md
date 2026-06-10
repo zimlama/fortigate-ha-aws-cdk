@@ -1,6 +1,7 @@
 # fortigate-ha-aws-cdk
 
 **Proven cross-AZ FortiGate FGCP failover on AWS — deploy, inject a fault, validate, destroy.**
+
 One command stands up a 2-AZ Active-Passive FortiGate cluster, terminates the
 active node, and automatically proves the Elastic IP migrated to the survivor —
 then tears everything down. Backed by a layered diagnostics harness so a failed
@@ -10,16 +11,48 @@ run tells you *why*, not just *that* it failed.
 ![Coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-brightgreen)
 ![CDK](https://img.shields.io/badge/CDK-v2%20TypeScript-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
+![Validated](https://img.shields.io/badge/validated-end--to--end-brightgreen)
 
 ---
 
-## Proven
+> 🎬 **[Watch the 12-minute demo](https://asciinema.org/a/TBD)** — clone, install, deploy, terminate the active, watch the EIP migrate, auto-destroy. Recorded with `asciinema`, runs in the browser.
+
+---
+
+## The problem
+
+> *"In AWS, FortiGate's MGMT interface doesn't fail over."*
+> When the Passive node takes over, you lose management access — silently.
+
+FortiGate HA on AWS uses FGCP to elect a new Active when the current one fails.
+The failover callback reassigns the Elastic IP and updates route tables — but
+**it does not migrate the MGMT interface**. If you configure admin access on
+the MGMT port (the default), failover works at the network level but you lose
+the ability to manage the new Active node. In a real incident, that's the
+moment you need it most.
+
+**The fix is one config line**: move admin access to Port2 (INTERNAL), which
+IS covered by the failover callback.
+
+```
+config system interface
+  edit "port2"
+    set allowaccess https ssh   ← admin lives here, not on mgmt
+  next
+end
+```
+
+This repo deploys the full architecture, triggers a real failover, and
+automatically verifies that Port2 management survives — across two AZs.
+
+---
+
+## Proven end-to-end
 
 ```
 [pre-flight] number of member: 2                       → 2-member cluster formed
-==> Terminating Active node i-01c4…                    → fault injected
-[poll #1 | +0s] node i-09f4…  role=ACTIVE  hasWanEip=true   → survivor took the EIP (<10 s)
-EIP invariant: OK
+==> Terminating Active node                            → fault injected
+[poll #1 | +0s]  EIP invariant: OK                     → survivor took the EIP (<10 s)
 PASSED ✅  Failover validation succeeded.
 ==> PIPELINE COMPLETE — FAILOVER PASSED ✅
 ==> [cleanup] all stacks destroyed

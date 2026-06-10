@@ -9,7 +9,7 @@
 
 ## Context
 
-The first end-to-end deploy (`v1.0.0`) of this lab on AWS account `064625181580` (us-east-1) failed at the failover step. The FortiGate cluster never formed (`number of member: 1`), so the FGCP failover callback could not re-associate the WAN EIP and the validator returned `no EIP holder found`.
+The first end-to-end deploy (`v1.0.0`) of this lab on a sandbox AWS account (us-east-1) failed at the failover step. The FortiGate cluster never formed (`number of member: 1`), so the FGCP failover callback could not re-associate the WAN EIP and the validator returned `no EIP holder found`.
 
 The HA heartbeat security group (`sg-ha`) was configured with ingress TCP/UDP 703, which is the **session-sync** port — not the heartbeat port. The FortiGate Cluster Protocol (FGCP) heartbeat uses **protocol-level EtherType packets** (not TCP/UDP), so port-703-only rules silently drop them. The result is two units that each think they are the only cluster member and never negotiate.
 
