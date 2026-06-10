@@ -43,7 +43,7 @@ re-associated the WAN EIP on poll #1.
 
 ### AWS account
 
-- An active AWS account (this guide was tested on `064625181580` / `us-east-1`).
+- An active AWS account (this guide was tested on a sandbox account / `us-east-1`).
 - IAM principal with permissions for EC2, VPC, IAM, Lambda, EventBridge, S3, CloudFormation.
 - Verify identity:
   ```bash
