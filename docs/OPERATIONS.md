@@ -233,4 +233,5 @@ aws cloudformation list-stacks --region us-east-1 \
 | `docs/cost-analysis.md` | FortiGate PAYG vs. AWS-native, with crossover analysis |
 | `docs/lessons-learned.md` | Post-mortems of real failures (10 lessons) |
 | `docs/ENGINEERING_PROCESS.md` | How the project evolves — branching, PR, CHANGELOG, ADR |
+| `docs/PROTECTIONS.md` | The 4 anti-cost layers (trap, WatchdogStack, AccountGuardian, Budget) and how to reuse them |
 | `CHANGELOG.md` | Release-by-release user-visible changes |
