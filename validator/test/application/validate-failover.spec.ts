@@ -158,4 +158,26 @@ describe("ValidateFailoverUseCase", () => {
       expect(outcome.reasons.some((r) => r.includes("timed out"))).toBe(true);
     });
   });
+
+  describe("S3.7 — No active node (cluster did not converge)", () => {
+    it("returns FAILED with 'no active node found' reason when no node is ACTIVE", async () => {
+      // Both nodes TERMINATED — no ACTIVE node exists. The Port2 probe
+      // branch (else: console.log + reasons.push) must be exercised.
+      const stateNoActive = new HAState([
+        makeNode("i-A", "TERMINATED", NODE_A_IP, true, 200),
+        makeNode("i-B", "TERMINATED", NODE_B_IP, true, 100),
+      ]);
+      const cloud = new FakeCloudQuery([stateNoActive]);
+      const net = new FakeReachability(new Set());
+      const useCase = new ValidateFailoverUseCase(cloud, net);
+
+      const outcome = await useCase.execute({
+        terminatedNodeId: "i-A",
+        ...FAST_POLL,
+      } as ValidateFailoverInput);
+
+      expect(outcome.isPassed()).toBe(false);
+      expect(outcome.reasons).toContain("no active node found");
+    });
+  });
 });
