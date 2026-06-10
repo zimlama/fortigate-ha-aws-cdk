@@ -1,10 +1,15 @@
 ---
 title: Deployment & Failover Test Guide
-date: 2026-06-04
+date: 2026-06-10
 author: Leonardo Mejía
 ---
 
 # 🚀 Deployment & Failover Test Guide
+
+> **This guide is the detailed, step-by-step version. The new
+> [`docs/OPERATIONS.md`](./OPERATIONS.md) is the single source of truth for
+> operating the lab — read it first. This file is preserved for the deeper
+> context on each step.**
 
 Complete step-by-step manual to prepare, deploy, and validate the FortiGate HA cluster on AWS.
 
