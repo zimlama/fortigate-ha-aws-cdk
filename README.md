@@ -164,8 +164,11 @@ Two independent cost guards prevent runaway lab spend: the `trap cleanup EXIT` i
 
 1. AWS CLI configured with a profile (`us-east-1`)
 2. **Accept FortiGate PAYG terms** in [AWS Marketplace](https://aws.amazon.com/marketplace/pp/prodview-wory773oau6wq) — one-time, required before first deploy
-3. CDK bootstrapped: `npx cdk bootstrap`
+3. CDK bootstrapped: `AWS_PROFILE=<profile> npx cdk bootstrap`
 4. Node.js ≥ 18
+5. `npm ci` (never `npm install`) in `infra/` and `validator/` after a fresh clone
+
+For the complete pre-flight checklist, see [`docs/OPERATIONS.md`](docs/OPERATIONS.md) §1.
 
 ---
 
@@ -174,13 +177,13 @@ Two independent cost guards prevent runaway lab spend: the `trap cleanup EXIT` i
 ```bash
 git clone https://github.com/zimlama/fortigate-ha-aws-cdk
 cd fortigate-ha-aws-cdk
+git checkout master                  # default branch — the validated baseline
 
-# Run all tests (no AWS needed)
-cd infra && npm ci && npm test
-cd ../validator && npm ci && npm test
+# Install + run all tests (no AWS needed)
+(cd infra     && npm ci && npm test)   # 24 CDK assertion tests
+(cd validator && npm ci && npm test)   # 20+ domain tests, ≥90% coverage
 
-# Deploy + failover test + auto-destroy (~30 min, ~$1.34)
-cd ..
+# Deploy + failover test + auto-destroy (~15 min, ~$1.50)
 AWS_PROFILE=<profile> HA_PASSWORD='<secret>' \
   ADMIN_CIDR=<your-ip>/32 \
   ./scripts/deploy-and-test.sh
@@ -189,6 +192,20 @@ AWS_PROFILE=<profile> HA_PASSWORD='<secret>' \
 Exit code `0` = `FAILOVER PASSED ✅`. Everything is destroyed automatically via the
 `trap cleanup EXIT` plus the WatchdogStack as backup. The full run log is written to
 `/tmp/fgt-ha-run-<timestamp>.log` (survives the teardown — your forensic record).
+
+> ⚠️ **Always deploy from `master`**. The `legacy/v1-initial` branch is the
+> pre-fix snapshot and will fail validation (cluster never forms).
+> See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for the full step-by-step.
+
+## How this project evolves
+
+This is not just a working lab — it's an **evolving engineering artifact**.
+Every change follows a documented process: feature branch → PR → review →
+CHANGELOG entry → ADR if the decision is non-obvious. The v1.0.0 → v1.1.0
+journey is visible in the git log, in [`CHANGELOG.md`](CHANGELOG.md), and in
+[`docs/ADR/0001-fgcp-heartbeat-self-referencing-sg.md`](docs/ADR/0001-fgcp-heartbeat-self-referencing-sg.md).
+
+Full process documentation: [`docs/ENGINEERING_PROCESS.md`](docs/ENGINEERING_PROCESS.md).
 
 ---
 
