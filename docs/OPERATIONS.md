@@ -171,6 +171,23 @@ Two independent cost guards prevent runaway lab spend:
 1. **`trap cleanup EXIT`** in `deploy-and-test.sh` — runs `cdk destroy --all --force --ci` when the script exits, under any condition (success, failure, Ctrl-C).
 2. **WatchdogStack** — a separate EventBridge + Lambda that auto-destroys the stacks if the script crashes hard and the trap doesn't fire.
 
+### Orphan log groups
+
+CDK's `s3.Bucket({ autoDeleteObjects: true })` creates a Custom Resource Lambda
+whose LogGroup has no retention. When BastionStack is destroyed, the log
+group is NOT deleted — it accumulates one new entry per deploy. Each log
+group is empty (0 bytes) and so costs $0, but they pile up.
+
+Run periodically to clean up:
+
+```bash
+AWS_PROFILE=default ./scripts/cleanup-orphan-log-groups.sh
+# Add --dry-run to preview
+```
+
+The script deletes all `/aws/lambda/BastionStack-CustomS3AutoDeleteObjects*`
+log groups in `us-east-1` and leaves `account-guardian` and `CDKToolkit` alone.
+
 Full cost analysis with sensitivity modelling in `docs/cost-analysis.md`.
 
 ---
