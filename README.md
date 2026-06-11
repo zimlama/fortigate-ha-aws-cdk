@@ -12,10 +12,11 @@ run tells you *why*, not just *that* it failed.
 ![CDK](https://img.shields.io/badge/CDK-v2%20TypeScript-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Validated](https://img.shields.io/badge/validated-end--to--end-brightgreen)
+[![asciicast](https://asciinema.org/a/EeW15KgKLLy0bUTH.svg)](https://asciinema.org/a/EeW15KgKLLy0bUTH)
 
 ---
 
-> 🎬 **[Watch the 12-minute demo](https://asciinema.org/a/TBD)** — clone, install, deploy, terminate the active, watch the EIP migrate, auto-destroy. Recorded with `asciinema`, runs in the browser.
+> 🎬 **[Watch the demo](https://asciinema.org/a/EeW15KgKLLy0bUTH)** — clone, install, deploy, terminate the active, watch the EIP migrate, auto-destroy. Recorded with `asciinema`, runs in the browser.
 
 ---
 
